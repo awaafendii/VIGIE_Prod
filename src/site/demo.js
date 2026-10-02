@@ -2,7 +2,7 @@
    Chiffres affichés dans les aperçus du site.
    Ils sont obtenus avec la logique de src/App.jsx appliquée :
      • au jeu d'exemple PME (NPM Multiservices, juin 2026) ;
-     • au portefeuille de démonstration « Sahel Crédit ».
+     • au portefeuille de démonstration « Cayor Crédit ».
    Si le jeu d'exemple de l'application change, mettre à jour ici.
    ============================================================ */
 export const PME = {
@@ -11,7 +11,7 @@ export const PME = {
   realise: "40 635 000 FCFA",
   projete: "64 635 000 FCFA",
   flux: [["Encaissé", "121 M", "vert"], ["À recevoir", "39 M", "ambre"], ["Décaissé", "80 M", "rouge"], ["À payer", "15 M", "or"]],
-  canaux: [["Virement", "56 M", 47], ["Orange Money", "40 M", 33], ["Espèces", "15 M", 13], ["MTN MoMo", "9,1 M", 7]],
+  canaux: [["Virement", "56 M", 47], ["Orange Money", "40 M", 33], ["Espèces", "15 M", 13], ["Wave", "9,1 M", 7]],
   lignes: 27,
   sante: "Solide",
   indicateurs: [
@@ -29,14 +29,14 @@ export const PME = {
 };
 
 export const PORTEFEUILLE = {
-  institution: "Sahel Crédit",
+  institution: "Cayor Crédit",
   emprunteurs: 47,
   kpis: [["Encours brut", "1,8 Md", "ink"], ["PAR 30", "13 %", "ambre"], ["PAR 90", "7 %", "rouge"], ["Coût du risque", "8 %", "or"]],
   alerte: { nb: 7, exposition: "256 M", part: "14 %" },
   watchlist: [
-    { nom: "Cie Mansa Négoce", secteur: "Commerce & distribution", region: "Conakry", score: 43, delta: -21, stress: 16, ead: "98 M" },
-    { nom: "Sarl Djoliba Logistique", secteur: "Import-export", region: "Dakar", score: 39, delta: -23, stress: 12, ead: "70 M" },
-    { nom: "Sarl Bamtaare Services", secteur: "Services", region: "Thiès", score: 50, delta: -27, stress: 12, ead: "20 M" },
+    { nom: "GIE Kaay Négoce", secteur: "Commerce & distribution", region: "Kaolack", score: 43, delta: -21, stress: 16, ead: "98 M" },
+    { nom: "Sarl Ndakaaru Logistique", secteur: "Import-export", region: "Dakar", score: 39, delta: -23, stress: 12, ead: "70 M" },
+    { nom: "Sarl Lompoul Services", secteur: "Services", region: "Thiès", score: 50, delta: -27, stress: 12, ead: "20 M" },
   ],
 };
 

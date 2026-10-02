@@ -4,7 +4,7 @@ import { Section, EnTete, Reveal } from "../components/ui.jsx";
 
 const QUESTIONS = [
   ["Faut-il un logiciel comptable ?", "Non. Un fichier Excel (.xlsx, .xlsm) ou CSV de ventes et de dépenses suffit. La correspondance des colonnes s'adapte à votre format : vous n'avez rien à ressaisir."],
-  ["Quels moyens de paiement sont reconnus ?", "Virement, espèces, Orange Money, MTN MoMo et prélèvement. Les autres libellés sont regroupés sous « Autre » et restent comptabilisés."],
+  ["Quels moyens de paiement sont reconnus ?", "Virement, espèces, Orange Money, Wave et prélèvement. Les autres libellés sont regroupés sous « Autre » et restent comptabilisés."],
   ["À quoi sert le rapprochement ?", "À comparer votre comptabilité à vos relevés bancaires ou mobile money. Si votre fichier contient déjà un rapprochement, VIGIE l'affiche. Sinon, ajoutez un relevé pour repérer les encaissements jamais enregistrés et les écritures à vérifier."],
   ["Que voit exactement une institution ?", "Avec votre accord : votre score, son évolution, sa décomposition en six signaux et votre position de trésorerie. Sans accord : uniquement l'encours qu'elle vous a consenti."],
   ["VIGIE remplace-t-il le PAR ?", "Non, il le complète. Le PAR mesure les retards constatés ; l'alerte précoce de VIGIE signale les emprunteurs encore à jour dont la trésorerie se dégrade."],

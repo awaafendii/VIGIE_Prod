@@ -9,7 +9,7 @@ import { Carte, Barre } from "./ui.jsx";
    alimentées par les chiffres de démonstration (demo.js).
    ============================================================ */
 const ton = (t) => C[t] || C.ink;
-const ICONES_CANAL = { Virement: Landmark, Espèces: Banknote, "Orange Money": Smartphone, "MTN MoMo": Smartphone };
+const ICONES_CANAL = { Virement: Landmark, Espèces: Banknote, "Orange Money": Smartphone, Wave: Smartphone };
 
 export function CadreApp({ titre, icone: Ic, children, className = "" }) {
   return (
@@ -149,7 +149,7 @@ export function ApercuFinancement() {
 
 // interrupteurs de partage : cliquables, comme dans l'application
 export function ApercuPartage() {
-  const [etat, setEtat] = useState({ "Sahel Crédit": true, "Kora Capital": false });
+  const [etat, setEtat] = useState({ "Cayor Crédit": true, "Ndiambour Capital": false });
   return (
     <Carte className="p-5 shadow-[0_24px_60px_-28px_rgba(14,27,44,0.35)]">
       <div className="flex items-start gap-3"><Link2 size={18} className="mt-0.5 shrink-0" style={{ color: C.teal }} />

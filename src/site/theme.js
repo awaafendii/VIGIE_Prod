@@ -16,7 +16,7 @@ export const STATUTS = {
   PAR90: { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" },
   Douteux: { c: C.rougeF, bg: "#FEF2F2", bd: "#FCA5A5" },
 };
-export const CANAUX = { Virement: "#0E1B2C", Espèces: C.or, "Orange Money": "#F16E00", "MTN MoMo": "#C99700" };
+export const CANAUX = { Virement: "#0E1B2C", Espèces: C.or, "Orange Money": "#F16E00", Wave: "#1DC8FF" };
 
 // route de l'application (routage par ancre : fonctionne sur tout hébergement statique)
 export const APP_HREF = "#/app";

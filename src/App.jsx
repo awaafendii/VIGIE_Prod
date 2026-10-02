@@ -31,41 +31,41 @@ const toISO = (v) => { if (v == null || v === "") return null; if (v instanceof 
 
 const C = { ink: "#0E1B2C", canvas: "#F5F6F4", vert: "#047857", teal: "#0F766E", ambre: "#B45309", or: "#A16207", rouge: "#B91C1C", rougeF: "#7F1D1D", muted: "#5B6472", hairline: "#E3E6E2" };
 const STATUTS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Arriérés: { c: C.or, bg: "#FEFCE8", bd: "#FDE68A" }, PAR30: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, PAR90: { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" }, Douteux: { c: C.rougeF, bg: "#FEF2F2", bd: "#FCA5A5" } };
-const CANAUX = { "Virement": { c: "#0E1B2C", icone: Landmark }, "Espèces": { c: C.or, icone: Banknote }, "Orange Money": { c: "#F16E00", icone: Smartphone }, "MTN MoMo": { c: "#C99700", icone: Smartphone }, "Prélèvement": { c: C.teal, icone: RefreshCw }, "Autre": { c: C.muted, icone: CircleDollarSign } };
-const normCanal = (v) => { const s = String(v || "").trim().toLowerCase(); if (s.includes("virement")) return "Virement"; if (s.includes("espèce") || s.includes("espece") || s.includes("cash")) return "Espèces"; if (s.includes("orange")) return "Orange Money"; if (s.includes("mtn") || s.includes("momo")) return "MTN MoMo"; if (s.includes("prélèv") || s.includes("prelev")) return "Prélèvement"; return "Autre"; };
+const CANAUX = { "Virement": { c: "#0E1B2C", icone: Landmark }, "Espèces": { c: C.or, icone: Banknote }, "Orange Money": { c: "#F16E00", icone: Smartphone }, "Wave": { c: "#1DC8FF", icone: Smartphone }, "Prélèvement": { c: C.teal, icone: RefreshCw }, "Autre": { c: C.muted, icone: CircleDollarSign } };
+const normCanal = (v) => { const s = String(v || "").trim().toLowerCase(); if (s.includes("virement")) return "Virement"; if (s.includes("espèce") || s.includes("espece") || s.includes("cash")) return "Espèces"; if (s.includes("orange")) return "Orange Money"; if (s.includes("wave")) return "Wave"; if (s.includes("prélèv") || s.includes("prelev")) return "Prélèvement"; return "Autre"; };
 const normStatut = (v) => { const s = String(v || "").trim().toLowerCase(); return s.startsWith("pay") ? "Payé" : s.startsWith("impay") ? "Impayé" : "Inconnu"; };
-const INSTITUTIONS = [{ id: "sahel", nom: "Sahel Crédit" }, { id: "baobab", nom: "Baobab Microfinance" }, { id: "kora", nom: "Kora Capital" }];
-const SEEDS = { sahel: 20261121, baobab: 55012, kora: 88133 };
+const INSTITUTIONS = [{ id: "cayor", nom: "Cayor Crédit" }, { id: "jappoo", nom: "Jappoo Microfinance" }, { id: "ndiambour", nom: "Ndiambour Capital" }];
+const SEEDS = { cayor: 20261121, jappoo: 55012, ndiambour: 88133 };
 
 /* ---------- données réelles (jeu d'exemple) ---------- */
 const EX_VENTES = [
-  { Date: "2026-06-02", Client: "Alimentation Barry & Frères", Produit: "Sac de riz parfumé 50 kg", Montant: 27900000, Mode: "Virement", Statut: "Payé", Clé: 46175.0001 },
-  { Date: "2026-06-03", Client: "Restaurant Le Foutah", Produit: "Bidon d'huile végétale 20 L", Montant: 8500000, Mode: "Espèces", Statut: "Payé", Clé: 46176.00011 },
+  { Date: "2026-06-02", Client: "Alimentation Ndiaye & Frères", Produit: "Sac de riz parfumé 50 kg", Montant: 27900000, Mode: "Virement", Statut: "Payé", Clé: 46175.0001 },
+  { Date: "2026-06-03", Client: "Restaurant Keur Ndèye", Produit: "Bidon d'huile végétale 20 L", Montant: 8500000, Mode: "Espèces", Statut: "Payé", Clé: 46176.00011 },
   { Date: "2026-06-05", Client: "Boutique Aïssatou Sow", Produit: "Sac de ciment 50 kg", Montant: 18400000, Mode: "Orange Money", Statut: "Payé", Clé: 46178.00012 },
-  { Date: "2026-06-07", Client: "Ets Mamadou Diallo", Produit: "Sac de riz parfumé 50 kg", Montant: 18600000, Mode: "Virement", Statut: "Impayé", Clé: 46180.00013 },
-  { Date: "2026-06-09", Client: "Sté Camara Distribution", Produit: "Carton de savon (48 pcs)", Montant: 7800000, Mode: "MTN MoMo", Statut: "Payé", Clé: 46182.00014 },
-  { Date: "2026-06-11", Client: "Ets Ousmane Condé", Produit: "Prestation transport & livraison", Montant: 1250000, Mode: "Espèces", Statut: "Payé", Clé: 46184.00015 },
-  { Date: "2026-06-12", Client: "Alimentation Barry & Frères", Produit: "Bidon d'huile végétale 20 L", Montant: 10200000, Mode: "Orange Money", Statut: "Payé", Clé: 46185.00016 },
-  { Date: "2026-06-14", Client: "Marché Central Kindia — F. Keïta", Produit: "Sac de ciment 50 kg", Montant: 13800000, Mode: "Virement", Statut: "Impayé", Clé: 46187.00017 },
-  { Date: "2026-06-16", Client: "Restaurant Le Foutah", Produit: "Contrat maintenance mensuel", Montant: 900000, Mode: "Virement", Statut: "Payé", Clé: 46189.00018 },
-  { Date: "2026-06-18", Client: "Ets Mamadou Diallo", Produit: "Carton de savon (48 pcs)", Montant: 5460000, Mode: "Espèces", Statut: "Payé", Clé: 46191.00019 },
+  { Date: "2026-06-07", Client: "Ets Moussa Diop", Produit: "Sac de riz parfumé 50 kg", Montant: 18600000, Mode: "Virement", Statut: "Impayé", Clé: 46180.00013 },
+  { Date: "2026-06-09", Client: "Sté Mbaye Distribution", Produit: "Carton de savon (48 pcs)", Montant: 7800000, Mode: "Wave", Statut: "Payé", Clé: 46182.00014 },
+  { Date: "2026-06-11", Client: "Ets Ousmane Faye", Produit: "Prestation transport & livraison", Montant: 1250000, Mode: "Espèces", Statut: "Payé", Clé: 46184.00015 },
+  { Date: "2026-06-12", Client: "Alimentation Ndiaye & Frères", Produit: "Bidon d'huile végétale 20 L", Montant: 10200000, Mode: "Orange Money", Statut: "Payé", Clé: 46185.00016 },
+  { Date: "2026-06-14", Client: "Marché Sandaga — F. Guèye", Produit: "Sac de ciment 50 kg", Montant: 13800000, Mode: "Virement", Statut: "Impayé", Clé: 46187.00017 },
+  { Date: "2026-06-16", Client: "Restaurant Keur Ndèye", Produit: "Contrat maintenance mensuel", Montant: 900000, Mode: "Virement", Statut: "Payé", Clé: 46189.00018 },
+  { Date: "2026-06-18", Client: "Ets Moussa Diop", Produit: "Carton de savon (48 pcs)", Montant: 5460000, Mode: "Espèces", Statut: "Payé", Clé: 46191.00019 },
   { Date: "2026-06-20", Client: "Boutique Aïssatou Sow", Produit: "Sac de riz parfumé 50 kg", Montant: 11625000, Mode: "Orange Money", Statut: "Payé", Clé: 46193.0002 },
-  { Date: "2026-06-22", Client: "Ets Ousmane Condé", Produit: "Prestation transport & livraison", Montant: 1250000, Mode: "MTN MoMo", Statut: "Payé", Clé: 46195.00021 },
-  { Date: "2026-06-24", Client: "Sté Camara Distribution", Produit: "Bidon d'huile végétale 20 L", Montant: 6800000, Mode: "Virement", Statut: "Impayé", Clé: 46197.00022 },
-  { Date: "2026-06-27", Client: "Alimentation Barry & Frères", Produit: "Sac de ciment 50 kg", Montant: 27600000, Mode: "Virement", Statut: "Payé", Clé: 46200.00023 },
+  { Date: "2026-06-22", Client: "Ets Ousmane Faye", Produit: "Prestation transport & livraison", Montant: 1250000, Mode: "Wave", Statut: "Payé", Clé: 46195.00021 },
+  { Date: "2026-06-24", Client: "Sté Mbaye Distribution", Produit: "Bidon d'huile végétale 20 L", Montant: 6800000, Mode: "Virement", Statut: "Impayé", Clé: 46197.00022 },
+  { Date: "2026-06-27", Client: "Alimentation Ndiaye & Frères", Produit: "Sac de ciment 50 kg", Montant: 27600000, Mode: "Virement", Statut: "Payé", Clé: 46200.00023 },
 ];
 const EX_DEPENSES = [
-  { Date: "2026-06-01", Fournisseur: "Grands Moulins de Guinée", Libellé: "Approvisionnement riz", Montant: 22000000, Mode: "Virement", Statut: "Payé", Clé: 46174.0001 },
-  { Date: "2026-06-04", Fournisseur: "Guinée Oil Distribution", Libellé: "Stock huile végétale", Montant: 14400000, Mode: "Virement", Statut: "Payé", Clé: 46177.00011 },
-  { Date: "2026-06-06", Fournisseur: "Ciments de Guinée", Libellé: "Stock ciment", Montant: 15200000, Mode: "Virement", Statut: "Impayé", Clé: 46179.00012 },
-  { Date: "2026-06-10", Fournisseur: "SODEFA Grossiste", Libellé: "Stock savon", Montant: 9800000, Mode: "Espèces", Statut: "Payé", Clé: 46183.00013 },
-  { Date: "2026-06-05", Fournisseur: "EDG / SEG", Libellé: "Électricité EDG", Montant: 3200000, Mode: "Virement", Statut: "Payé", Clé: 46178.00014 },
-  { Date: "2026-06-05", Fournisseur: "EDG / SEG", Libellé: "Eau SEG", Montant: 850000, Mode: "Virement", Statut: "Payé", Clé: 46178.00015 },
+  { Date: "2026-06-01", Fournisseur: "Rizerie du Walo", Libellé: "Approvisionnement riz", Montant: 22000000, Mode: "Virement", Statut: "Payé", Clé: 46174.0001 },
+  { Date: "2026-06-04", Fournisseur: "Huilerie du Saloum", Libellé: "Stock huile végétale", Montant: 14400000, Mode: "Virement", Statut: "Payé", Clé: 46177.00011 },
+  { Date: "2026-06-06", Fournisseur: "Ciments de la Petite-Côte", Libellé: "Stock ciment", Montant: 15200000, Mode: "Virement", Statut: "Impayé", Clé: 46179.00012 },
+  { Date: "2026-06-10", Fournisseur: "Grossiste Thiam & Fils", Libellé: "Stock savon", Montant: 9800000, Mode: "Espèces", Statut: "Payé", Clé: 46183.00013 },
+  { Date: "2026-06-05", Fournisseur: "Senelec / SEN'EAU", Libellé: "Électricité Senelec", Montant: 3200000, Mode: "Virement", Statut: "Payé", Clé: 46178.00014 },
+  { Date: "2026-06-05", Fournisseur: "Senelec / SEN'EAU", Libellé: "Eau SEN'EAU", Montant: 850000, Mode: "Virement", Statut: "Payé", Clé: 46178.00015 },
   { Date: "2026-06-03", Fournisseur: "Bailleur", Libellé: "Loyer magasin", Montant: 6000000, Mode: "Virement", Statut: "Payé", Clé: 46176.00016 },
-  { Date: "2026-06-15", Fournisseur: "Orange Guinée", Libellé: "Télécom & Internet", Montant: 1400000, Mode: "Orange Money", Statut: "Payé", Clé: 46188.00017 },
+  { Date: "2026-06-15", Fournisseur: "Orange Sénégal", Libellé: "Télécom & Internet", Montant: 1400000, Mode: "Orange Money", Statut: "Payé", Clé: 46188.00017 },
   { Date: "2026-06-28", Fournisseur: null, Libellé: "Salaires du personnel", Montant: 12000000, Mode: "Virement", Statut: "Payé", Clé: 46201.00018 },
-  { Date: "2026-06-12", Fournisseur: "Transports Sylla", Libellé: "Carburant & livraisons", Montant: 4800000, Mode: "Espèces", Statut: "Payé", Clé: 46185.00019 },
-  { Date: "2026-06-20", Fournisseur: "Transports Sylla", Libellé: "Location camion", Montant: 2200000, Mode: "Espèces", Statut: "Payé", Clé: 46193.0002 },
+  { Date: "2026-06-12", Fournisseur: "Transports Seck", Libellé: "Carburant & livraisons", Montant: 4800000, Mode: "Espèces", Statut: "Payé", Clé: 46185.00019 },
+  { Date: "2026-06-20", Fournisseur: "Transports Seck", Libellé: "Location camion", Montant: 2200000, Mode: "Espèces", Statut: "Payé", Clé: 46193.0002 },
   { Date: "2026-06-18", Fournisseur: null, Libellé: "Fournitures de bureau", Montant: 1500000, Mode: "Espèces", Statut: "Payé", Clé: 46191.00021 },
   { Date: "2026-06-25", Fournisseur: null, Libellé: "Frais bancaires & taxes", Montant: 2100000, Mode: "Prélèvement", Statut: "Payé", Clé: 46198.00022 },
 ];
@@ -76,9 +76,9 @@ const EX_RECON = {
     { compte: "Orange Money (5211)", canal: "Orange Money", comptable: 43825000, releve: 43675000 },
   ],
   lettrage: [
-    { date: "2026-06-07", tiers: "Ets Mamadou Diallo", piece: "VT-004 ↔ RG-014", montant: 18600000, statut: "Lettré", ecart: 0 },
-    { date: "2026-06-14", tiers: "Marché Central Kindia", piece: "VT-008", montant: 13800000, statut: "Non lettré", ecart: 13800000 },
-    { date: "2026-06-06", tiers: "Ciments de Guinée", piece: "AC-003", montant: 15200000, statut: "Non lettré", ecart: -15200000 },
+    { date: "2026-06-07", tiers: "Ets Moussa Diop", piece: "VT-004 ↔ RG-014", montant: 18600000, statut: "Lettré", ecart: 0 },
+    { date: "2026-06-14", tiers: "Marché Sandaga", piece: "VT-008", montant: 13800000, statut: "Non lettré", ecart: 13800000 },
+    { date: "2026-06-06", tiers: "Ciments de la Petite-Côte", piece: "AC-003", montant: 15200000, statut: "Non lettré", ecart: -15200000 },
   ],
 };
 
@@ -174,9 +174,9 @@ function rapprocher(E, releve) {
 
 /* ---------- portefeuille VIGIE ---------- */
 const SECT = ["Commerce & distribution", "Agro-alimentaire", "Transport & logistique", "Import-export", "Services", "BTP", "Artisanat"];
-const REG = ["Dakar", "Thiès", "Saint-Louis", "Ziguinchor", "Conakry", "Kankan", "Kindia"];
-const PRE = ["Ets", "Sarl", "Groupe", "Cie", "Ste"];
-const ROOT = ["Teranga", "Baraka", "Djoliba", "Fouta", "Sahel", "Yaakaar", "Jappoo", "Bamtaare", "Ndakaaru", "Kankou", "Faso", "Niani", "Kéné", "Wakat", "Diarama", "Mansa", "Kora", "Nimba", "Bani", "Sankofa"];
+const REG = ["Dakar", "Thiès", "Saint-Louis", "Ziguinchor", "Kaolack", "Touba", "Mbour"];
+const PRE = ["Ets", "Sarl", "Groupe", "GIE", "Ste"];
+const ROOT = ["Teranga", "Jàmm", "Ndakaaru", "Bamtaare", "Diarama", "Liggéey", "Naatangué", "Lompoul", "Baol", "Saloum", "Walo", "Djolof", "Casamance", "Gorée", "Thiossane", "Kaay", "Ndeyssane", "Sunu", "Dalal", "Niokolo"];
 const ACT = ["Négoce", "Trading", "Logistique", "Agro", "Services", "Distribution", "Commerce", "Bâtiment", "Import", "Transit"];
 function genererPortefeuille(seed) {
   const r = rng(seed); const arr = [];
@@ -200,7 +200,7 @@ function construireVedette(profil, nomFocus) {
   const sc = histo[histo.length - 1].score;
   const scoreDelta = sc - histo[histo.length - 2].score;
   const pd = Math.max(0.02, Math.min(0.6, 0.02 + (100 - sc) / 100 * 0.42));
-  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Conakry", ead: 28000000, taux: 0.14, anciennete: 19, score: sc, scoreDelta, dpd: 0, statut: "Sain", alertePrecoce: false, joursAvantStress: null, pd, lgd: 0.45, ecl: 28000000 * pd * 0.45, profil, histo };
+  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 28000000, taux: 0.14, anciennete: 19, score: sc, scoreDelta, dpd: 0, statut: "Sain", alertePrecoce: false, joursAvantStress: null, pd, lgd: 0.45, ecl: 28000000 * pd * 0.45, profil, histo };
 }
 function agreger(pf) {
   const enc = pf.reduce((a, e) => a + e.ead, 0); const exp = (f) => pf.filter(f).reduce((a, e) => a + e.ead, 0);
@@ -229,8 +229,8 @@ export default function App() {
   const [pmeVue, setPmeVue] = useState("import");
   const [instVue, setInstVue] = useState("board");
   const [sel, setSel] = useState(null);
-  const [instActive, setInstActive] = useState("sahel");
-  const [partages, setPartages] = useState(["sahel", "kora"]);
+  const [instActive, setInstActive] = useState("cayor");
+  const [partages, setPartages] = useState(["cayor", "ndiambour"]);
   const [valides, setValides] = useState({});
   const [rejetes, setRejetes] = useState({});
   const [source, setSource] = useState(null);

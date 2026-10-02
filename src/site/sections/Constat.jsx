@@ -11,7 +11,7 @@ const PALIERS = [
 ];
 
 const CONSTATS = [
-  { icone: FileSpreadsheet, titre: "Des données éparpillées", texte: "Ventes dans un fichier Excel, paiements en espèces, Orange Money, MTN MoMo, virements : la trésorerie réelle d'une PME n'est consolidée nulle part." },
+  { icone: FileSpreadsheet, titre: "Des données éparpillées", texte: "Ventes dans un fichier Excel, paiements en espèces, Orange Money, Wave, virements : la trésorerie réelle d'une PME n'est consolidée nulle part." },
   { icone: Smartphone, titre: "Des revenus hors comptabilité", texte: "Un encaissement mobile money jamais saisi, c'est un chiffre d'affaires que ni l'entrepreneur ni son financeur ne voient." },
   { icone: EyeOff, titre: "Un risque invisible au PAR", texte: "Un emprunteur qui paie encore ses échéances mais dont le cash s'érode n'apparaît dans aucun indicateur classique." },
 ];
