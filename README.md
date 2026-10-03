@@ -23,10 +23,9 @@ Le dossier `dist/` contient l'application prête à héberger. Pour la tester sa
 npm run preview
 ```
 
-## Déployer sur Vercel
-1. Pousser ce dossier sur un dépôt GitHub.
-2. Sur vercel.com : New Project → importer le dépôt.
-3. Vercel détecte Vite automatiquement (Build: `npm run build`, Output: `dist`).
-4. Deploy → une URL HTTPS est générée.
+## En ligne
+- Production : https://vigie-app-snowy.vercel.app (application : `#/app`)
+- Dépôt : https://github.com/awaafendii/VIGIE_Prod
+- Vercel (projet `vigie-app`, équipe DIGI_GN) est relié au dépôt : chaque `git push` sur `main` redéploie la production automatiquement (Build : `npm run build`, Output : `dist`).
 
 Déployer plusieurs jours avant toute présentation, ouvrir l'URL une fois pour la mettre en cache, et garder le dossier `dist/` en secours hors-ligne.
