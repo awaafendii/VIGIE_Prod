@@ -5,13 +5,16 @@
      • au portefeuille de démonstration « Cayor Crédit ».
    Si le jeu d'exemple de l'application change, mettre à jour ici.
    ============================================================ */
+// format de fcfa() dans src/App.jsx, avec une espace insécable avant « FCFA »
+const fcfa = (n) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(n) + "\u00A0FCFA";
+
 export const PME = {
   nom: "NPM Multiservices",
   periode: "Juin 2026",
-  realise: "40 635 000 FCFA",
-  projete: "64 635 000 FCFA",
-  flux: [["Encaissé", "121 M", "vert"], ["À recevoir", "39 M", "ambre"], ["Décaissé", "80 M", "rouge"], ["À payer", "15 M", "or"]],
-  canaux: [["Virement", "56 M", 47], ["Orange Money", "40 M", 33], ["Espèces", "15 M", 13], ["Wave", "9,1 M", 7]],
+  realise: fcfa(4063500),
+  projete: fcfa(6463500),
+  flux: [["Encaissé", "12 M", "vert"], ["À recevoir", "3,9 M", "ambre"], ["Décaissé", "8,0 M", "rouge"], ["À payer", "1,5 M", "or"]],
+  canaux: [["Virement", "5,6 M", 47], ["Orange Money", "4,0 M", 33], ["Espèces", "1,5 M", 13], ["Wave", "905 k", 7]],
   lignes: 27,
   sante: "Solide",
   indicateurs: [
@@ -23,20 +26,20 @@ export const PME = {
   correspondance: [["Date", "Date"], ["Montant (encaissé)", "Montant"], ["Canal de paiement", "Mode"], ["Statut", "Statut"], ["Contrepartie", "Client"], ["Libellé", "Produit"], ["Référence unique", "Clé"]],
   rapprochement: {
     kpis: [["Lignes du relevé", "9", "ink"], ["Rapprochées", "88 %", "vert"], ["Non enregistrés", "2", "rouge"], ["À vérifier", "1", "ambre"]],
-    nonEnregistre: "6 850 000 FCFA",
-    orphelins: [["Encaissement non identifié", "Orange Money", "2026-06-08", "4,2 M"], ["Virement reçu non rapproché", "Virement", "2026-06-19", "2,6 M"]],
+    nonEnregistre: fcfa(685000),
+    orphelins: [["Encaissement non identifié", "Orange Money", "2026-06-08", "420 k"], ["Virement reçu non rapproché", "Virement", "2026-06-19", "265 k"]],
   },
 };
 
 export const PORTEFEUILLE = {
   institution: "Cayor Crédit",
   emprunteurs: 47,
-  kpis: [["Encours brut", "1,8 Md", "ink"], ["PAR 30", "13 %", "ambre"], ["PAR 90", "7 %", "rouge"], ["Coût du risque", "8 %", "or"]],
-  alerte: { nb: 7, exposition: "256 M", part: "14 %" },
+  kpis: [["Encours brut", "181 M", "ink"], ["PAR 30", "13 %", "ambre"], ["PAR 90", "7 %", "rouge"], ["Coût du risque", "8 %", "or"]],
+  alerte: { nb: 7, exposition: "26 M", part: "14 %" },
   watchlist: [
-    { nom: "GIE Kaay Négoce", secteur: "Commerce & distribution", region: "Kaolack", score: 43, delta: -21, stress: 16, ead: "98 M" },
-    { nom: "Sarl Ndakaaru Logistique", secteur: "Import-export", region: "Dakar", score: 39, delta: -23, stress: 12, ead: "70 M" },
-    { nom: "Sarl Lompoul Services", secteur: "Services", region: "Thiès", score: 50, delta: -27, stress: 12, ead: "20 M" },
+    { nom: "GIE Kaay Négoce", secteur: "Commerce & distribution", region: "Kaolack", score: 43, delta: -21, stress: 16, ead: "9,8 M" },
+    { nom: "Sarl Ndakaaru Logistique", secteur: "Import-export", region: "Dakar", score: 39, delta: -23, stress: 12, ead: "7,0 M" },
+    { nom: "Sarl Lompoul Services", secteur: "Services", region: "Thiès", score: 50, delta: -27, stress: 12, ead: "2,0 M" },
   ],
 };
 
