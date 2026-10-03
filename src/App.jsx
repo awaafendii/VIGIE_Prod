@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, createContext, useContext } from "react";
 import * as XLSX from "xlsx";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -8,7 +8,7 @@ import {
   UploadCloud, FileSpreadsheet, ArrowRight, ArrowLeft, CheckCircle2, XCircle,
   AlertTriangle, Wallet, TrendingUp, TrendingDown, Link2, Info, Table2, ShieldCheck,
   RefreshCw, ChevronRight, Landmark, Store, Smartphone, Banknote, CircleDollarSign,
-  ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban,
+  ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban, Coins,
 } from "lucide-react";
 
 /* ============================================================
@@ -19,15 +19,53 @@ import {
    Le profil issu de l'import alimente VIGIE (consentement).
    Rapprochement : affiché depuis le fichier s'il est présent ;
    sinon, ajout optionnel d'un relevé qui active la détection d'écarts.
-   Données réelles (NPM Multiservices) intégrées. Montants en FCFA.
+   Données réelles (NPM Multiservices) intégrées. Montants en FCFA,
+   affichables dans d'autres devises (taux indicatifs, voir DEVISES).
    ============================================================ */
 
 /* ---------- utilitaires ---------- */
 const rng = (seed) => () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-const fcfa = (n) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(Math.round(n)) + " FCFA";
-const court = (n) => { const a = Math.abs(n), s = n < 0 ? "-" : ""; if (a >= 1e9) return s + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace(".", ",") + " Md"; if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(".", ",") + " M"; if (a >= 1e3) return s + Math.round(a / 1e3) + " k"; return s + Math.round(a); };
+const abreger = (n) => { const a = Math.abs(n), s = n < 0 ? "-" : ""; if (a >= 1e9) return s + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace(".", ",") + " Md"; if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(".", ",") + " M"; if (a >= 1e3) return s + (a / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(".", ",") + " k"; return s + Math.round(a); };
 const pct = (x, d = 0) => (x * 100).toFixed(d).replace(".", ",") + " %";
 const toISO = (v) => { if (v == null || v === "") return null; if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10); const d = new Date(v); return isNaN(d) ? null : d.toISOString().slice(0, 10); };
+
+/* ---------- devises d'affichage ----------
+   Les données restent en FCFA ; seul l'affichage est converti.
+   xof = valeur en FCFA d'une unité de la devise. Taux indicatifs relevés le
+   03/10/2026 (moyenne open.er-api.com et currency-api) ; EUR et CVE : parités fixes.
+   À actualiser ici si besoin. */
+const TAUX_DATE = "3 octobre 2026";
+const DEVISES = {
+  XOF: { nom: "Franc CFA (BCEAO)", sym: "FCFA", xof: 1 },
+  EUR: { nom: "Euro", sym: "€", xof: 655.957, fixe: true },
+  USD: { nom: "Dollar américain", sym: "$US", xof: 583.0 },
+  GBP: { nom: "Livre sterling", sym: "£", xof: 770.55 },
+  CHF: { nom: "Franc suisse", sym: "CHF", xof: 703.11 },
+  CAD: { nom: "Dollar canadien", sym: "$CA", xof: 409.7 },
+  CNY: { nom: "Yuan chinois", sym: "CNY", xof: 86.83 },
+  GNF: { nom: "Franc guinéen", sym: "GNF", xof: 0.06615 },
+  GMD: { nom: "Dalasi gambien", sym: "GMD", xof: 7.842 },
+  MRU: { nom: "Ouguiya mauritanien", sym: "MRU", xof: 14.511 },
+  CVE: { nom: "Escudo cap-verdien", sym: "CVE", xof: 5.9489, fixe: true },
+  NGN: { nom: "Naira nigérian", sym: "₦", xof: 0.437 },
+  GHS: { nom: "Cedi ghanéen", sym: "GH₵", xof: 49.557 },
+  MAD: { nom: "Dirham marocain", sym: "MAD", xof: 59.144 },
+  ZAR: { nom: "Rand sud-africain", sym: "ZAR", xof: 34.969 },
+  KES: { nom: "Shilling kényan", sym: "KES", xof: 4.49 },
+};
+const GROUPES_DEVISES = [["Principales", ["XOF", "EUR", "USD", "GBP", "CHF", "CAD", "CNY"]], ["Afrique", ["GNF", "GMD", "MRU", "CVE", "NGN", "GHS", "MAD", "ZAR", "KES"]]];
+const nombre = (n, dec) => new Intl.NumberFormat("fr-FR", { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(n);
+// montant : valeur complète (« 4 063 500 FCFA », « 6 194,72 € ») ; court : valeur abrégée (« 9,8 M », « 15 k € »)
+function formateurs(code) {
+  const d = DEVISES[code]; const dec = d.xof >= 40 ? 2 : 0; const unite = code === "XOF" ? "" : " " + d.sym;
+  return { montant: (n) => nombre(n / d.xof, dec) + " " + d.sym, court: (n) => abreger(n / d.xof) + unite };
+}
+function texteTaux(code) {
+  const d = DEVISES[code]; const fmt = (x) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 3 }).format(x);
+  return d.xof >= 1 ? `1 ${d.sym} = ${fmt(d.xof)} FCFA` : `1 FCFA = ${fmt(1 / d.xof)} ${d.sym}`;
+}
+const DeviseContext = createContext(formateurs("XOF"));
+const useMontants = () => useContext(DeviseContext);
 
 const C = { ink: "#0E1B2C", canvas: "#F5F6F4", vert: "#047857", teal: "#0F766E", ambre: "#B45309", or: "#A16207", rouge: "#B91C1C", rougeF: "#7F1D1D", muted: "#5B6472", hairline: "#E3E6E2" };
 const STATUTS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Arriérés: { c: C.or, bg: "#FEFCE8", bd: "#FDE68A" }, PAR30: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, PAR90: { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" }, Douteux: { c: C.rougeF, bg: "#FEF2F2", bd: "#FCA5A5" } };
@@ -237,6 +275,8 @@ export default function App() {
   const [mapV, setMapV] = useState(null); const [mapD, setMapD] = useState(null);
   const [impEtape, setImpEtape] = useState(0);
   const [releveAjoute, setReleveAjoute] = useState(null);
+  const [devise, setDevise] = useState("XOF");
+  const formats = useMemo(() => formateurs(devise), [devise]);
 
   const chargerExemple = useCallback((avecRapprochement) => {
     const ventes = { colonnes: Object.keys(EX_VENTES[0]), lignes: EX_VENTES };
@@ -286,6 +326,7 @@ export default function App() {
   const ajouterReleve = () => setReleveAjoute(rapprocher(resultat.entrees, genererReleveExemple(resultat.entrees)));
 
   return (
+    <DeviseContext.Provider value={formats}>
     <div style={{ background: C.canvas, minHeight: "100vh", color: C.ink }} className="font-sans antialiased">
       <header style={{ background: C.ink }} className="px-4 py-3 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
@@ -295,10 +336,18 @@ export default function App() {
               <div className="text-[11px]" style={{ color: "#9AA7B8" }}>{espace === "pme" ? "Trésorerie & financement" : "VIGIE — risque de portefeuille"}</div></div>
             {espace === "inst" && (<select value={instActive} onChange={(e) => { setInstActive(e.target.value); setSel(null); }} className="ml-1 rounded-md px-2 py-1 text-xs font-semibold text-white outline-none" style={{ background: "#1C2E44" }}>{INSTITUTIONS.map((i) => <option key={i.id} value={i.id} style={{ color: C.ink }}>{i.nom}</option>)}</select>)}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: "#1C2E44" }} title={devise === "XOF" ? "Afficher les montants dans une autre devise" : texteTaux(devise)}>
+            <Coins size={14} style={{ color: "#9AA7B8" }} /><span className="sr-only">Devise d'affichage</span>
+            <select value={devise} onChange={(e) => setDevise(e.target.value)} className="max-w-[9.5rem] bg-transparent text-xs font-semibold text-white outline-none">
+              {GROUPES_DEVISES.map(([groupe, codes]) => <optgroup key={groupe} label={groupe} style={{ color: C.ink }}>{codes.map((c) => <option key={c} value={c} style={{ color: C.ink }}>{DEVISES[c].sym} · {DEVISES[c].nom}</option>)}</optgroup>)}
+            </select>
+          </label>
           <div className="flex rounded-lg p-1" style={{ background: "#1C2E44" }}>
             {[["pme", "Espace PME", Store], ["inst", "Espace Institution", Landmark]].map(([id, lbl, Ic]) => (
               <button key={id} onClick={() => { setEspace(id); setSel(null); }} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold" style={{ background: espace === id ? "#fff" : "transparent", color: espace === id ? C.ink : "#9AA7B8" }}><Ic size={14} /><span className="hidden sm:inline">{lbl}</span></button>
             ))}
+          </div>
           </div>
         </div>
       </header>
@@ -321,6 +370,12 @@ export default function App() {
       )}
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-8">
+        {devise !== "XOF" && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#F0F5F4", border: `1px solid ${C.hairline}`, color: C.muted }}>
+            <span className="flex flex-wrap items-center gap-1.5"><Coins size={13} style={{ color: C.teal }} /> Montants affichés en <span className="font-semibold" style={{ color: C.ink }}>{DEVISES[devise].nom} ({DEVISES[devise].sym})</span> · {texteTaux(devise)} · {DEVISES[devise].fixe ? "parité fixe" : `taux indicatif du ${TAUX_DATE}`}</span>
+            <button onClick={() => setDevise("XOF")} className="font-semibold" style={{ color: C.teal }}>Revenir au FCFA</button>
+          </div>
+        )}
         {espace === "pme" ? (
           pmeVue === "import" ? <Import source={source} mapV={mapV} setMapV={setMapV} mapD={mapD} setMapD={setMapD} resultat={resultat} etape={impEtape} setEtape={setImpEtape} onExemple={chargerExemple} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); }} goVue={setPmeVue} />
             : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} /> : <PromptImport goImport={() => setPmeVue("import")} />)
@@ -334,6 +389,7 @@ export default function App() {
       </main>
 
     </div>
+    </DeviseContext.Provider>
   );
 }
 
@@ -420,6 +476,7 @@ function Validation({ resultat, onBack, onNext }) {
   );
 }
 function ProfilImport({ resultat, onBack, onReset, goVue }) {
+  const { court } = useMontants();
   const p = resultat.profil;
   return (
     <div className="space-y-5">
@@ -444,13 +501,14 @@ function ProfilImport({ resultat, onBack, onReset, goVue }) {
 
 /* ============================================================ PME : TRÉSORERIE ============================================================ */
 function Tresorerie({ profil: p }) {
+  const { montant, court } = useMontants();
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold">Ma trésorerie</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce qui est réellement entré, ce qui reste à encaisser, et votre position si tout se règle.</p></div>
       <Carte className="p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div><div className="text-xs font-medium" style={{ color: C.muted }}>Trésorerie nette réalisée (mois)</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.realise >= 0 ? C.teal : C.rouge }}>{fcfa(p.realise)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>encaissé − décaissé, hors impayés</div></div>
-          <div className="sm:border-l sm:pl-4" style={{ borderColor: C.hairline }}><div className="text-xs font-medium" style={{ color: C.muted }}>Position projetée</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.projete >= 0 ? C.teal : C.rouge }}>{fcfa(p.projete)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>+ créances à encaisser − dettes à payer</div></div>
+          <div><div className="text-xs font-medium" style={{ color: C.muted }}>Trésorerie nette réalisée (mois)</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.realise >= 0 ? C.teal : C.rouge }}>{montant(p.realise)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>encaissé − décaissé, hors impayés</div></div>
+          <div className="sm:border-l sm:pl-4" style={{ borderColor: C.hairline }}><div className="text-xs font-medium" style={{ color: C.muted }}>Position projetée</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.projete >= 0 ? C.teal : C.rouge }}>{montant(p.projete)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>+ créances à encaisser − dettes à payer</div></div>
         </div>
       </Carte>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -469,6 +527,7 @@ function Tresorerie({ profil: p }) {
 
 /* ============================================================ PME : RAPPROCHEMENT (conditionnel) ============================================================ */
 function Rapprochement({ hasReleve, recon, releveAjoute, onAjouter }) {
+  const { court } = useMontants();
   // Branche A : rapprochement présent dans le fichier
   if (hasReleve) {
     if (recon.detecteSansDetail) {
@@ -528,6 +587,7 @@ function Rapprochement({ hasReleve, recon, releveAjoute, onAjouter }) {
 }
 function EnTeteRappro() { return <div><h2 className="text-lg font-semibold">Rapprochement bancaire</h2></div>; }
 function ResultatRappro({ r }) {
+  const { montant, court } = useMontants();
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -537,7 +597,7 @@ function ResultatRappro({ r }) {
       {r.montantNonEnreg > 0 && (
         <div className="flex items-start gap-3 rounded-xl p-4" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
           <AlertTriangle size={18} style={{ color: C.rouge, marginTop: 2 }} />
-          <div className="text-sm"><span className="font-semibold" style={{ color: C.rouge }}>{fcfa(r.montantNonEnreg)} présents sur le relevé mais absents de votre comptabilité.</span></div>
+          <div className="text-sm"><span className="font-semibold" style={{ color: C.rouge }}>{montant(r.montantNonEnreg)} présents sur le relevé mais absents de votre comptabilité.</span></div>
         </div>
       )}
       <Carte>
@@ -607,13 +667,14 @@ function Financement({ profil: p, institutions, partages, setPartages, valides }
 
 /* ============================================================ INSTITUTION : VIGIE ============================================================ */
 function Board({ agg, setVue, onOpen, candidatsCount, instNom }) {
+  const { montant, court } = useMontants();
   return (
     <div className="space-y-5">
       <div className="rounded-2xl p-6 sm:p-8" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl"><div className="flex items-center gap-2 text-sm font-semibold" style={{ color: C.rouge }}><ShieldAlert size={18} /> Alerte précoce</div>
             <h1 className="mt-3 font-serif text-2xl font-semibold leading-snug sm:text-3xl">{agg.watchlist.length} emprunteurs à jour, mais en dégradation.</h1>
-            <p className="mt-2 text-sm" style={{ color: C.muted }}>Ils représentent <span className="font-semibold" style={{ color: C.rouge }}>{fcfa(agg.expoAlerte)}</span> d'exposition invisible au PAR. Leurs signaux de trésorerie se détériorent — la fenêtre pour agir avant l'impayé.</p>
+            <p className="mt-2 text-sm" style={{ color: C.muted }}>Ils représentent <span className="font-semibold" style={{ color: C.rouge }}>{montant(agg.expoAlerte)}</span> d'exposition invisible au PAR. Leurs signaux de trésorerie se détériorent — la fenêtre pour agir avant l'impayé.</p>
             <button onClick={() => setVue("watch")} className="mt-4 inline-flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}>Voir la watchlist <ChevronRight size={15} /></button></div>
           <div className="text-right"><div className="text-[11px]" style={{ color: C.muted }}>Exposition sous alerte</div><div className="font-serif text-3xl font-semibold tabular-nums" style={{ color: C.rouge }}>{court(agg.expoAlerte)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>{pct(agg.expoAlerte / agg.encoursTotal)} de l'encours</div></div>
         </div>
@@ -627,11 +688,11 @@ function Board({ agg, setVue, onOpen, candidatsCount, instNom }) {
         <Carte className="p-5"><div className="mb-3 text-sm font-semibold">Encours par secteur</div>
           <ResponsiveContainer width="100%" height={210}><BarChart data={agg.parSecteur} layout="vertical" margin={{ left: 8, right: 16 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" horizontal={false} /><XAxis type="number" tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} axisLine={false} tickLine={false} /><YAxis type="category" dataKey="nom" width={78} tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(v) => fcfa(v)} cursor={{ fill: "#F5F6F4" }} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Bar dataKey="encours" radius={[0, 4, 4, 0]} fill={C.teal} /></BarChart></ResponsiveContainer></Carte>
+            <Tooltip formatter={(v) => montant(v)} cursor={{ fill: "#F5F6F4" }} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Bar dataKey="encours" radius={[0, 4, 4, 0]} fill={C.teal} /></BarChart></ResponsiveContainer></Carte>
         <Carte className="p-5"><div className="mb-3 text-sm font-semibold">Encours par statut de risque</div>
           <ResponsiveContainer width="100%" height={210}><BarChart data={agg.parStatut} margin={{ left: 4, right: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="statut" tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} /><YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={44} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(v, n, p) => [fcfa(v), `${p.payload.nb} emprunteurs`]} cursor={{ fill: "#F5F6F4" }} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Bar dataKey="encours" radius={[4, 4, 0, 0]}>{agg.parStatut.map((d, i) => <Cell key={i} fill={STATUTS[d.statut].c} />)}</Bar></BarChart></ResponsiveContainer></Carte>
+            <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="statut" tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} /><YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={60} axisLine={false} tickLine={false} />
+            <Tooltip formatter={(v, n, p) => [montant(v), `${p.payload.nb} emprunteurs`]} cursor={{ fill: "#F5F6F4" }} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Bar dataKey="encours" radius={[4, 4, 0, 0]}>{agg.parStatut.map((d, i) => <Cell key={i} fill={STATUTS[d.statut].c} />)}</Bar></BarChart></ResponsiveContainer></Carte>
       </div>
       <Carte><div className="flex items-center justify-between border-b px-5 py-3" style={{ borderColor: C.hairline }}><div className="text-sm font-semibold">Watchlist — priorités</div><button onClick={() => setVue("watch")} className="text-xs font-medium" style={{ color: C.teal }}>Tout voir →</button></div>
         <div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.slice(0, 4).map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} />)}</div></Carte>
@@ -639,6 +700,7 @@ function Board({ agg, setVue, onOpen, candidatsCount, instNom }) {
   );
 }
 function LigneWL({ e, onOpen }) {
+  const { court } = useMontants();
   return (
     <button onClick={() => onOpen(e.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left text-sm hover:bg-[#FAFBFA]">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-serif text-sm font-bold" style={{ background: "#F0F5F4", color: C.teal }}>{e.score}</div>
@@ -650,6 +712,7 @@ function LigneWL({ e, onOpen }) {
   );
 }
 function Watch({ agg, onOpen }) {
+  const { court } = useMontants();
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition.</p></div>
@@ -659,6 +722,7 @@ function Watch({ agg, onOpen }) {
   );
 }
 function Liste({ portefeuille, onOpen }) {
+  const { court } = useMontants();
   const [q, setQ] = useState(""); const [tri, setTri] = useState("ead");
   const arr = useMemo(() => { let a = portefeuille.filter((e) => e.nom.toLowerCase().includes(q.toLowerCase()) || e.secteur.toLowerCase().includes(q.toLowerCase())); return [...a].sort((x, y) => tri === "ead" ? y.ead - x.ead : tri === "score" ? x.score - y.score : y.dpd - x.dpd); }, [portefeuille, q, tri]);
   return (
@@ -681,6 +745,7 @@ function Liste({ portefeuille, onOpen }) {
   );
 }
 function AValider({ candidats, onOpen, onValider, onEcarter, instNom }) {
+  const { court } = useMontants();
   return (
     <div className="space-y-5">
       <div><h2 className="text-lg font-semibold">PME à valider</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Les PME qui ont partagé leur profil avec {instNom} et attendent votre décision. Évaluez le score et sa trajectoire, puis validez pour les intégrer à votre portefeuille, ou écartez.</p></div>
@@ -705,6 +770,7 @@ function AValider({ candidats, onOpen, onValider, onEcarter, instNom }) {
   );
 }
 function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack }) {
+  const { montant, court } = useMontants();
   const f = useMemo(() => ficheData(e), [e]);
   const partage = e.isFocus ? partageActive : true;
   return (
@@ -748,8 +814,8 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack }) 
             <><div className="mb-3 text-[11px]" style={{ color: C.muted }}>{f.rupture ? `Rupture projetée le ${f.rupture.date.toLocaleDateString("fr-FR", { day: "2-digit", month: "long" })}` : "Pas de rupture projetée"}</div>
               <ResponsiveContainer width="100%" height={200}><AreaChart data={f.serie} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
                 <defs><linearGradient id="gf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={f.rupture ? C.rouge : C.teal} stopOpacity={0.25} /><stop offset="100%" stopColor={f.rupture ? C.rouge : C.teal} stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: C.muted }} interval={11} axisLine={false} tickLine={false} /><YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={44} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v) => fcfa(v)} labelFormatter={() => ""} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><ReferenceLine y={0} stroke={C.rouge} strokeDasharray="4 3" /><Area type="monotone" dataKey="solde" stroke={f.rupture ? C.rouge : C.teal} strokeWidth={2} fill="url(#gf)" /></AreaChart></ResponsiveContainer></>
+                <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: C.muted }} interval={11} axisLine={false} tickLine={false} /><YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={60} axisLine={false} tickLine={false} />
+                <Tooltip formatter={(v) => montant(v)} labelFormatter={() => ""} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><ReferenceLine y={0} stroke={C.rouge} strokeDasharray="4 3" /><Area type="monotone" dataKey="solde" stroke={f.rupture ? C.rouge : C.teal} strokeWidth={2} fill="url(#gf)" /></AreaChart></ResponsiveContainer></>
           )}
         </Carte>
         <Carte className="p-5"><div className="mb-3 text-sm font-semibold">Décomposition du score</div>

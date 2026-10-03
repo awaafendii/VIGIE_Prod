@@ -7,7 +7,7 @@ const FONCTIONS = [
   {
     icone: HeartPulse, nom: "Ma trésorerie", titre: "Ce qui est entré, ce qui reste à encaisser.",
     texte: "Deux chiffres suffisent pour décider : la trésorerie nette réalisée, et la position projetée si tous les impayés se règlent.",
-    points: ["Encaissé et décaissé distingués de ce qui reste dû", "Ventilation par canal : virement, espèces, Orange Money, Wave", "Montants exprimés en FCFA"],
+    points: ["Encaissé et décaissé distingués de ce qui reste dû", "Ventilation par canal : virement, espèces, Orange Money, Wave", "Montants en FCFA, affichables en euro, dollar, franc guinéen, naira…"],
     apercu: ApercuTresorerie,
   },
   {
