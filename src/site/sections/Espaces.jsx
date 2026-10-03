@@ -1,4 +1,4 @@
-import { UploadCloud, HeartPulse, GitCompareArrows, ShieldCheck, Layers, BadgeCheck, ShieldAlert, Building2, Store, Landmark, Lock, ArrowRight } from "lucide-react";
+import { UploadCloud, HeartPulse, GitCompareArrows, ShieldCheck, Layers, BadgeCheck, ShieldAlert, Building2, Store, Landmark, Lock, ArrowRight, Bell, Send } from "lucide-react";
 import { C } from "../theme.js";
 import { Section, EnTete, Carte, Reveal } from "../components/ui.jsx";
 
@@ -6,19 +6,19 @@ const FLUX = [
   { qui: "PME", titre: "Import du fichier", texte: "Ventes et dépenses, tel quel." },
   { qui: "PME", titre: "Profil de trésorerie", texte: "Calculé sur l'argent réellement encaissé." },
   { qui: "PME", titre: "Consentement", texte: "Partage choisi, établissement par établissement.", verrou: true },
-  { qui: "Institution", titre: "Validation & suivi", texte: "Le dossier entre au portefeuille, sous alerte précoce." },
+  { qui: "Institution", titre: "Validation & suivi", texte: "Le dossier entre au portefeuille, sous alerte précoce, avec des recommandations si besoin." },
 ];
 
 const ESPACES = [
   {
     id: "#pme", icone: Store, nom: "Espace PME", pour: "Pour les entrepreneurs", couleur: C.teal,
     texte: "Comprendre sa trésorerie, retrouver l'argent non enregistré et savoir comment un financeur lit son dossier.",
-    onglets: [[UploadCloud, "Import"], [HeartPulse, "Ma trésorerie"], [GitCompareArrows, "Rapprochement"], [ShieldCheck, "Mon financement"]],
+    onglets: [[UploadCloud, "Import"], [HeartPulse, "Ma trésorerie"], [GitCompareArrows, "Rapprochement"], [ShieldCheck, "Mon financement"], [Bell, "Recommandations"]],
   },
   {
     id: "#institution", icone: Landmark, nom: "Espace Institution", pour: "Pour les IMF, banques et prêteurs", couleur: C.ink,
     texte: "Suivre la qualité du portefeuille, valider les nouveaux dossiers et agir sur les emprunteurs qui se dégradent.",
-    onglets: [[Layers, "Portefeuille"], [BadgeCheck, "À valider"], [ShieldAlert, "Alerte précoce"], [Building2, "Emprunteurs"]],
+    onglets: [[Layers, "Portefeuille"], [BadgeCheck, "À valider"], [ShieldAlert, "Alerte précoce"], [Building2, "Emprunteurs"], [Send, "Suivi"]],
   },
 ];
 

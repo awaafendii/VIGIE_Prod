@@ -6,6 +6,7 @@ Plateforme de trésorerie PME et d'évaluation du risque de crédit.
 - `/` (`#/`) — site vitrine : `src/site/` (sections dans `sections/`, briques communes dans `components/`, palette dans `theme.js`, chiffres des aperçus dans `demo.js`).
 - `#/app` — l'application : `src/App.jsx`, chargée à la demande.
 - `src/Root.jsx` aiguille entre les deux (routage par ancre, aucun réglage serveur nécessaire).
+- Recommandations (alerte précoce → conseil envoyé à la PME) : section `RECOMMANDATIONS` de `src/App.jsx`, modèles par défaut dans `MODELES_DEFAUT`. Démo en mémoire, sans serveur.
 - Devises d'affichage : constante `DEVISES` dans `src/App.jsx` (taux indicatifs datés, à actualiser au besoin ; les données restent en FCFA).
 
 ## Lancer en local

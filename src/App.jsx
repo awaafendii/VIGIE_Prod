@@ -9,6 +9,7 @@ import {
   AlertTriangle, Wallet, TrendingUp, TrendingDown, Link2, Info, Table2, ShieldCheck,
   RefreshCw, ChevronRight, Landmark, Store, Smartphone, Banknote, CircleDollarSign,
   ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban, Coins,
+  Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X,
 } from "lucide-react";
 
 /* ============================================================
@@ -16,6 +17,8 @@ import {
    Une seule application :
      • Espace PME : Import → Trésorerie → Rapprochement → Financement
      • Espace Institution (VIGIE) : risque de portefeuille
+   • Recommandations : l'institution transforme l'alerte précoce en
+     conseils envoyés à la PME, qui répond depuis son espace
    Le profil issu de l'import alimente VIGIE (consentement).
    Rapprochement : affiché depuis le fichier s'il est présent ;
    sinon, ajout optionnel d'un relevé qui active la détection d'écarts.
@@ -36,7 +39,7 @@ const toISO = (v) => { if (v == null || v === "") return null; if (v instanceof 
    À actualiser ici si besoin. */
 const TAUX_DATE = "3 octobre 2026";
 const DEVISES = {
-  XOF: { nom: "Franc CFA (BCEAO)", sym: "FCFA", xof: 1 },
+  XOF: { nom: "Franc CFA", sym: "FCFA", xof: 1 },
   EUR: { nom: "Euro", sym: "€", xof: 655.957, fixe: true },
   USD: { nom: "Dollar américain", sym: "$US", xof: 583.0 },
   GBP: { nom: "Livre sterling", sym: "£", xof: 770.55 },
@@ -72,7 +75,7 @@ const STATUTS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Arriérés:
 const CANAUX = { "Virement": { c: "#0E1B2C", icone: Landmark }, "Espèces": { c: C.or, icone: Banknote }, "Orange Money": { c: "#F16E00", icone: Smartphone }, "Wave": { c: "#1DC8FF", icone: Smartphone }, "Prélèvement": { c: C.teal, icone: RefreshCw }, "Autre": { c: C.muted, icone: CircleDollarSign } };
 const normCanal = (v) => { const s = String(v || "").trim().toLowerCase(); if (s.includes("virement")) return "Virement"; if (s.includes("espèce") || s.includes("espece") || s.includes("cash")) return "Espèces"; if (s.includes("orange")) return "Orange Money"; if (s.includes("wave")) return "Wave"; if (s.includes("prélèv") || s.includes("prelev")) return "Prélèvement"; return "Autre"; };
 const normStatut = (v) => { const s = String(v || "").trim().toLowerCase(); return s.startsWith("pay") ? "Payé" : s.startsWith("impay") ? "Impayé" : "Inconnu"; };
-const INSTITUTIONS = [{ id: "cayor", nom: "Cayor Crédit" }, { id: "jappoo", nom: "Jappoo Microfinance" }, { id: "ndiambour", nom: "Ndiambour Capital" }];
+const INSTITUTIONS = [{ id: "cayor", nom: "Cayor Crédit", conseiller: "Fatou Sarr" }, { id: "jappoo", nom: "Jappoo Microfinance", conseiller: "Ibrahima Ba" }, { id: "ndiambour", nom: "Ndiambour Capital", conseiller: "Mariama Cissé" }];
 const SEEDS = { cayor: 20261121, jappoo: 55012, ndiambour: 88133 };
 
 /* ---------- données réelles (jeu d'exemple) ---------- */
@@ -155,7 +158,7 @@ function calculerProfil(E, S) {
   const taux = ventesTotal ? encaisse / ventesTotal : 0;
   const marge = ventesTotal ? (ventesTotal - (decaisse + dettes)) / ventesTotal : 0;
   const poidsFixe = ventesTotal ? chargesFixes / ventesTotal : 0;
-  return { encaisse, creances, decaisse, dettes, ventesTotal, realise: encaisse - decaisse, projete: encaisse - decaisse + creances - dettes, canaux, taux, marge, poidsFixe };
+  return { encaisse, creances, decaisse, dettes, ventesTotal, realise: encaisse - decaisse, projete: encaisse - decaisse + creances - dettes, canaux, taux, marge, poidsFixe, nbCreances: E.filter((e) => e.statut === "Impayé").length };
 }
 // score de bancabilité dérivé de la santé du mois (pour VIGIE)
 function scoreDepuisProfil(p) {
@@ -233,12 +236,12 @@ function genererPortefeuille(seed) {
   return arr;
 }
 // la PME importée, construite en emprunteur-vedette (candidate puis validée par une institution)
-function construireVedette(profil, nomFocus) {
+function construireVedette(profil, nomFocus, releve) {
   const histo = genererHistorique(profil);
   const sc = histo[histo.length - 1].score;
   const scoreDelta = sc - histo[histo.length - 2].score;
   const pd = Math.max(0.02, Math.min(0.6, 0.02 + (100 - sc) / 100 * 0.42));
-  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta, dpd: 0, statut: "Sain", alertePrecoce: false, joursAvantStress: null, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil, histo };
+  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta, dpd: 0, statut: "Sain", alertePrecoce: false, joursAvantStress: null, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil, histo, rappro: releve ? { nonEnregistre: releve.montantNonEnreg, nb: releve.releveOrphelins.length } : null };
 }
 function agreger(pf) {
   const enc = pf.reduce((a, e) => a + e.ead, 0); const exp = (f) => pf.filter(f).reduce((a, e) => a + e.ead, 0);
@@ -277,6 +280,8 @@ export default function App() {
   const [releveAjoute, setReleveAjoute] = useState(null);
   const [devise, setDevise] = useState("XOF");
   const formats = useMemo(() => formateurs(devise), [devise]);
+  const [notifs, setNotifs] = useState([]); // recommandations envoyées, la plus récente en premier
+  const [modeles, setModeles] = useState({}); // modèles modifiés, par institution
 
   const chargerExemple = useCallback((avecRapprochement) => {
     const ventes = { colonnes: Object.keys(EX_VENTES[0]), lignes: EX_VENTES };
@@ -310,7 +315,7 @@ export default function App() {
   const profil = resultat?.profil || null;
   const nomFocus = source ? source.nom.split("—")[0].trim() : "";
   const instNom = INSTITUTIONS.find((i) => i.id === instActive).nom;
-  const vedette = useMemo(() => (profil ? construireVedette(profil, nomFocus) : null), [profil, nomFocus]);
+  const vedette = useMemo(() => (profil ? construireVedette(profil, nomFocus, releveAjoute) : null), [profil, nomFocus, releveAjoute]);
   const book = useMemo(() => genererPortefeuille(SEEDS[instActive]), [instActive]);
   const partageActive = !!vedette && partages.includes(instActive);
   const vedetteValidee = (valides[instActive] || []).includes(0);
@@ -325,6 +330,24 @@ export default function App() {
   const importe = impEtape >= 3 && !!resultat;
   const ajouterReleve = () => setReleveAjoute(rapprocher(resultat.entrees, genererReleveExemple(resultat.entrees)));
 
+  // recommandations : envoi par l'institution, lecture et réponse par la PME
+  const inst = INSTITUTIONS.find((i) => i.id === instActive);
+  const modelesInst = useMemo(() => ({ ...MODELES_DEFAUT, ...(modeles[instActive] || {}) }), [modeles, instActive]);
+  const notifsInst = useMemo(() => notifs.filter((n) => n.inst === instActive), [notifs, instActive]);
+  const notifsPME = useMemo(() => notifs.filter((n) => n.empId === 0), [notifs]);
+  const notifsParEmp = useMemo(() => { const m = {}; notifsInst.forEach((n) => { if (!m[n.empId]) m[n.empId] = n; }); return m; }, [notifsInst]);
+  const nonLues = notifsPME.filter((n) => n.statut === "Envoyée").length;
+  const reponsesAttente = notifsInst.filter((n) => n.statut === "Réponse reçue").length;
+  const majNotif = (id, f) => setNotifs((ns) => ns.map((n) => (n.id === id ? f(n) : n)));
+  const etape = (n, statut, par) => ({ ...n, statut, historique: [...n.historique, { statut, le: new Date(), par }] });
+  const envoyerNotif = (e, c) => { const le = new Date(); setNotifs((ns) => [{ id: le.getTime(), inst: instActive, instNom, empId: e.id, empNom: e.nom, simule: !e.isFocus, ...c, actions: c.actions.map((texte) => ({ texte, fait: false })), envoyeLe: le, statut: "Envoyée", reponse: null, historique: [{ statut: "Envoyée", le, par: c.conseiller || instNom }] }, ...ns]); };
+  const lireNotif = (id) => majNotif(id, (n) => (n.statut === "Envoyée" ? etape(n, "Lue", n.empNom) : n));
+  const repondreNotif = (id, type, texte) => majNotif(id, (n) => ({ ...etape(n, "Réponse reçue", n.empNom), reponse: { type, texte, le: new Date() } }));
+  const cocherAction = (id, i) => majNotif(id, (n) => ({ ...n, actions: n.actions.map((a, j) => (j === i ? { ...a, fait: !a.fait } : a)) }));
+  const cloturerNotif = (id, statut) => majNotif(id, (n) => etape(n, statut, n.conseiller || n.instNom));
+  const setModele = (cle, m) => setModeles((ms) => ({ ...ms, [instActive]: { ...(ms[instActive] || {}), [cle]: m } }));
+  const resetModele = (cle) => setModeles((ms) => { const { [cle]: _retire, ...reste } = ms[instActive] || {}; return { ...ms, [instActive]: reste }; });
+
   return (
     <DeviseContext.Provider value={formats}>
     <div style={{ background: C.canvas, minHeight: "100vh", color: C.ink }} className="font-sans antialiased">
@@ -337,6 +360,12 @@ export default function App() {
             {espace === "inst" && (<select value={instActive} onChange={(e) => { setInstActive(e.target.value); setSel(null); }} className="ml-1 rounded-md px-2 py-1 text-xs font-semibold text-white outline-none" style={{ background: "#1C2E44" }}>{INSTITUTIONS.map((i) => <option key={i.id} value={i.id} style={{ color: C.ink }}>{i.nom}</option>)}</select>)}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+          {espace === "pme" && importe && (
+            <button onClick={() => setPmeVue("recommandations")} aria-label={nonLues ? `${nonLues} recommandation(s) non lue(s)` : "Recommandations"} className="relative grid h-8 w-8 place-items-center rounded-lg" style={{ background: "#1C2E44" }}>
+              <Bell size={15} style={{ color: nonLues ? "#fff" : "#9AA7B8" }} />
+              {nonLues > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full px-1 text-[10px] font-bold text-white" style={{ background: C.rouge }}>{nonLues}</span>}
+            </button>
+          )}
           <label className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: "#1C2E44" }} title={devise === "XOF" ? "Afficher les montants dans une autre devise" : texteTaux(devise)}>
             <Coins size={14} style={{ color: "#9AA7B8" }} /><span className="sr-only">Devise d'affichage</span>
             <select value={devise} onChange={(e) => setDevise(e.target.value)} className="max-w-[9.5rem] bg-transparent text-xs font-semibold text-white outline-none">
@@ -356,14 +385,16 @@ export default function App() {
         <nav className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur" style={{ borderColor: C.hairline }}>
           <div className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-3 sm:px-8">
             {(espace === "pme"
-              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["rapprochement", "Rapprochement", GitCompareArrows], ["financement", "Mon financement", ShieldCheck]]
-              : [["board", "Portefeuille", Layers], ["valider", "À valider", BadgeCheck], ["watch", "Alerte précoce", ShieldAlert], ["liste", "Emprunteurs", Building2]]
+              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["rapprochement", "Rapprochement", GitCompareArrows], ["financement", "Mon financement", ShieldCheck], ["recommandations", "Recommandations", Bell]]
+              : [["board", "Portefeuille", Layers], ["valider", "À valider", BadgeCheck], ["watch", "Alerte précoce", ShieldAlert], ["liste", "Emprunteurs", Building2], ["suivi", "Suivi", Send]]
             ).map(([id, lbl, Ic]) => { const actif = (espace === "pme" ? pmeVue : instVue) === id; return (
               <button key={id} onClick={() => espace === "pme" ? setPmeVue(id) : setInstVue(id)} className="flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium" style={{ color: actif ? C.ink : C.muted, borderBottom: `2px solid ${actif ? C.teal : "transparent"}` }}>
                 <Ic size={16} /> {lbl}
                 {id === "watch" && agg.watchlist.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{agg.watchlist.length}</span>}
                 {id === "import" && importe && <CheckCircle2 size={13} style={{ color: C.vert }} />}
                 {id === "valider" && candidats.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{candidats.length}</span>}
+                {id === "recommandations" && nonLues > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{nonLues}</span>}
+                {id === "suivi" && reponsesAttente > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{reponsesAttente}</span>}
               </button>); })}
           </div>
         </nav>
@@ -380,11 +411,13 @@ export default function App() {
           pmeVue === "import" ? <Import source={source} mapV={mapV} setMapV={setMapV} mapD={mapD} setMapD={setMapD} resultat={resultat} etape={impEtape} setEtape={setImpEtape} onExemple={chargerExemple} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); }} goVue={setPmeVue} />
             : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "rapprochement" ? (importe ? <Rapprochement hasReleve={hasReleve} recon={source.recon} releveAjoute={releveAjoute} onAjouter={ajouterReleve} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+              : pmeVue === "recommandations" ? (importe ? <Recommandations notifs={notifsPME} onLire={lireNotif} onRepondre={repondreNotif} onCocher={cocherAction} goVue={setPmeVue} /> : <PromptImport goImport={() => setPmeVue("import")} />)
                 : (importe ? <Financement profil={profil} institutions={INSTITUTIONS} partages={partages} setPartages={setPartages} valides={valides} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-        ) : selE ? <Fiche e={selE} partageActive={!selE.isFocus || partageActive} estCandidat={selE.isFocus && candidats.length > 0} onValider={() => { validerPME(0); setSel(null); setInstVue("liste"); }} onEcarter={() => { ecarterPME(0); setSel(null); }} onBack={() => setSel(null)} />
-          : instVue === "board" ? <Board agg={agg} setVue={setInstVue} onOpen={setSel} candidatsCount={candidats.length} instNom={instNom} />
+        ) : selE ? <Fiche e={selE} partageActive={!selE.isFocus || partageActive} estCandidat={selE.isFocus && candidats.length > 0} onValider={() => { validerPME(0); setSel(null); setInstVue("liste"); }} onEcarter={() => { ecarterPME(0); setSel(null); }} onBack={() => setSel(null)} inst={inst} modeles={modelesInst} notifs={notifsInst.filter((n) => n.empId === selE.id)} onEnvoyer={(c) => envoyerNotif(selE, c)} />
+          : instVue === "board" ? <Board agg={agg} setVue={setInstVue} onOpen={setSel} candidatsCount={candidats.length} instNom={instNom} notifsParEmp={notifsParEmp} />
             : instVue === "valider" ? <AValider candidats={candidats} onOpen={setSel} onValider={(id) => validerPME(id)} onEcarter={(id) => ecarterPME(id)} instNom={instNom} />
-            : instVue === "watch" ? <Watch agg={agg} onOpen={setSel} />
+            : instVue === "watch" ? <Watch agg={agg} onOpen={setSel} notifsParEmp={notifsParEmp} />
+            : instVue === "suivi" ? <Suivi notifs={notifsInst} instNom={instNom} modeles={modelesInst} modelesPerso={modeles[instActive] || {}} setModele={setModele} resetModele={resetModele} onCloturer={cloturerNotif} onOpen={setSel} setVue={setInstVue} />
               : <Liste portefeuille={portefeuille} onOpen={setSel} />}
       </main>
 
@@ -666,7 +699,7 @@ function Financement({ profil: p, institutions, partages, setPartages, valides }
 }
 
 /* ============================================================ INSTITUTION : VIGIE ============================================================ */
-function Board({ agg, setVue, onOpen, candidatsCount, instNom }) {
+function Board({ agg, setVue, onOpen, candidatsCount, instNom, notifsParEmp }) {
   const { montant, court } = useMontants();
   return (
     <div className="space-y-5">
@@ -695,29 +728,29 @@ function Board({ agg, setVue, onOpen, candidatsCount, instNom }) {
             <Tooltip formatter={(v, n, p) => [montant(v), `${p.payload.nb} emprunteurs`]} cursor={{ fill: "#F5F6F4" }} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Bar dataKey="encours" radius={[4, 4, 0, 0]}>{agg.parStatut.map((d, i) => <Cell key={i} fill={STATUTS[d.statut].c} />)}</Bar></BarChart></ResponsiveContainer></Carte>
       </div>
       <Carte><div className="flex items-center justify-between border-b px-5 py-3" style={{ borderColor: C.hairline }}><div className="text-sm font-semibold">Watchlist — priorités</div><button onClick={() => setVue("watch")} className="text-xs font-medium" style={{ color: C.teal }}>Tout voir →</button></div>
-        <div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.slice(0, 4).map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} />)}</div></Carte>
+        <div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.slice(0, 4).map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} notif={notifsParEmp[e.id]} />)}</div></Carte>
     </div>
   );
 }
-function LigneWL({ e, onOpen }) {
+function LigneWL({ e, onOpen, notif }) {
   const { court } = useMontants();
   return (
     <button onClick={() => onOpen(e.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left text-sm hover:bg-[#FAFBFA]">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-serif text-sm font-bold" style={{ background: "#F0F5F4", color: C.teal }}>{e.score}</div>
-      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-medium">{e.nom}</span>{e.isFocus && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#F0F5F4", color: C.teal }}><Link2 size={10} /> partagé</span>}</div><div className="text-[11px]" style={{ color: C.muted }}>{e.secteur} · {e.region}</div></div>
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-medium">{e.nom}</span>{e.isFocus && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#F0F5F4", color: C.teal }}><Link2 size={10} /> partagé</span>}{notif && <EtatChip etat={notif.statut} icone />}</div><div className="text-[11px]" style={{ color: C.muted }}>{e.secteur} · {e.region}</div></div>
       <div className="hidden text-right sm:block"><div className="text-[11px]" style={{ color: C.muted }}>stress</div><div className="text-sm font-semibold" style={{ color: C.rouge }}>J+{e.joursAvantStress}</div></div>
       <div className="hidden sm:block"><Trend delta={e.scoreDelta} /></div>
       <div className="text-right"><div className="font-semibold tabular-nums">{court(e.ead)}</div><div className="text-[11px]" style={{ color: C.muted }}>encours</div></div><ChevronRight size={16} style={{ color: C.muted }} />
     </button>
   );
 }
-function Watch({ agg, onOpen }) {
+function Watch({ agg, onOpen, notifsParEmp }) {
   const { court } = useMontants();
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition.</p></div>
+      <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition. Ouvrez un emprunteur pour lui envoyer une recommandation.</p></div>
       <div className="grid grid-cols-3 gap-4">{[["Signalés", agg.watchlist.length, C.rouge], ["Exposition", court(agg.expoAlerte), C.ambre], ["Part encours", pct(agg.expoAlerte / agg.encoursTotal), C.or]].map(([l, v, c], i) => (<Carte key={i} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}</div>
-      <Carte><div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} />)}</div></Carte>
+      <Carte><div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} notif={notifsParEmp[e.id]} />)}</div></Carte>
     </div>
   );
 }
@@ -769,10 +802,11 @@ function AValider({ candidats, onOpen, onValider, onEcarter, instNom }) {
     </div>
   );
 }
-function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack }) {
+function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, inst, modeles, notifs, onEnvoyer }) {
   const { montant, court } = useMontants();
   const f = useMemo(() => ficheData(e), [e]);
   const partage = e.isFocus ? partageActive : true;
+  const points = useMemo(() => pointsVigilance(e, f), [e, f]);
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium" style={{ color: C.teal }}><ArrowLeft size={15} /> Retour au portefeuille</button>
@@ -824,6 +858,7 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack }) 
       </div>) : (
         <div className="rounded-xl p-6 text-center text-sm" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: C.muted }}>Profil non partagé — aucun signal disponible.</div>
       )}
+      {partage && !estCandidat && <SectionRecommandation e={e} points={points} inst={inst} modeles={modeles} notifs={notifs} onEnvoyer={onEnvoyer} />}
     </div>
   );
 }
@@ -839,4 +874,316 @@ function ficheData(e) {
   const rupture = serie.find((p) => p.d > 0 && p.solde < 0);
   const signaux = noms.map(([nom, poids]) => ({ nom, poids, score: Math.max(5, Math.min(98, e.score + Math.round((r() - 0.5) * 34))) }));
   return { serie, rupture, signaux };
+}
+
+/* ============================================================ RECOMMANDATIONS (alerte précoce → action) ============================================================
+   Détecter (alerte précoce) → diagnostiquer (points de vigilance) → recommander (modèles modifiables
+   par l'institution, relus par un conseiller avant l'envoi) → dialoguer (réponse de la PME) → mesurer.
+   Démo sans serveur : les messages vivent en mémoire ; seule la PME importée a un espace consultable. */
+const NIVEAUX = {
+  Conseil: { c: C.teal, bg: "#F0F5F4", bd: "#B7D7D3" },
+  Vigilance: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" },
+  "Action requise": { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" },
+};
+const DELAI_DEFAUT = { Conseil: 0, Vigilance: 15, "Action requise": 7 }; // jours laissés pour répondre
+const ETATS_NOTIF = { "Envoyée": { c: C.muted, bg: "#EEF0ED" }, "Lue": { c: C.teal, bg: "#F0F5F4" }, "Réponse reçue": { c: C.ambre, bg: "#FFFBEB" }, "Résolue": { c: C.vert, bg: "#ECFDF5" }, "À escalader": { c: C.rouge, bg: "#FEF2F2" } };
+const REPONSES = [
+  ["compris", "J'ai compris", CheckCheck, null],
+  ["plan", "Je propose un plan", ClipboardList, "Décrivez ce que vous comptez faire, et d'ici quand."],
+  ["rdv", "Je demande un rendez-vous", CalendarClock, "Indiquez vos disponibilités (jour, heure, à l'agence ou par téléphone)."],
+  ["precision", "J'apporte une précision", MessageSquare, "Expliquez ce qui se passe de votre côté."],
+];
+const PRECISIONS = ["Baisse saisonnière (hivernage, Tabaski, Magal…)", "Un client important a payé en retard", "Achat de stock exceptionnel ce mois-ci"];
+const libelleReponse = (type) => REPONSES.find((r) => r[0] === type)[1];
+const DELAI_RELANCE = 14; // jours : un même point n'est pas signalé deux fois dans cet intervalle
+const DELAI_REVERIF = 15; // jours : revérification des signaux après l'envoi
+const ECRAN_POINT = { "Ventes impayées": ["tresorerie", "Ma trésorerie"], "Encaissements non enregistrés": ["rapprochement", "Rapprochement"], "Poids des charges fixes": ["financement", "Mon financement"] };
+const MODELES_DEFAUT = {
+  "Tension de trésorerie": { titre: "Une tension de trésorerie est possible", texte: "Au rythme actuel, votre solde pourrait passer sous zéro vers le {valeur}.", actions: ["Prendre rendez-vous avec votre conseiller", "Anticiper les paiements importants des prochaines semaines"] },
+  "Jours de trésorerie": { titre: "Votre réserve de trésorerie s'amenuise", texte: "Votre trésorerie disponible couvre moins de jours de charges qu'auparavant ({valeur}).", actions: ["Reporter ou fractionner le prochain achat de stock", "Négocier un délai de paiement avec un fournisseur", "Mettre de côté une partie des encaissements de la semaine"] },
+  "Régularité des encaissements": { titre: "Vos rentrées d'argent deviennent irrégulières", texte: "Vos encaissements arrivent par à-coups ces dernières semaines ({valeur}).", actions: ["Relancer les clients qui ont des factures en attente", "Proposer le paiement par Wave ou Orange Money", "Convenir d'un échéancier avec les gros clients"] },
+  "Tendance du CA": { titre: "Votre chiffre d'affaires recule", texte: "Vos ventes sont orientées à la baisse ({valeur}).", actions: ["Repérer les produits ou les clients en recul", "Relancer vos clients habituels", "Faire le point avec votre conseiller sur la saison à venir"] },
+  "Poids des charges fixes": { titre: "Vos charges fixes pèsent lourd", texte: "Le loyer et les salaires représentent une part élevée de vos ventes ({valeur}).", actions: ["Revoir les charges qui peuvent être réduites ou étalées", "Renégocier le loyer ou son échéance"] },
+  "Stabilité du solde": { titre: "Votre solde varie fortement", texte: "Votre solde de trésorerie connaît de fortes variations ({valeur}).", actions: ["Étaler les gros achats sur plusieurs semaines", "Éviter de concentrer plusieurs paiements importants le même jour"] },
+  "Discipline de trésorerie": { titre: "Des échéances méritent attention", texte: "Le suivi de vos échéances et de vos règlements mérite attention ({valeur}).", actions: ["Lister les paiements à venir sur 30 jours", "Établir un échéancier avec les fournisseurs concernés"] },
+  "Ventes impayées": { titre: "Des ventes restent à encaisser", texte: "Des factures clients restent impayées : {valeur}.", actions: ["Relancer les clients concernés", "Proposer un paiement fractionné ou par mobile money", "Fixer une date limite de règlement"] },
+  "Encaissements non enregistrés": { titre: "Des encaissements manquent dans votre comptabilité", texte: "Votre rapprochement fait apparaître des encaissements non enregistrés : {valeur}.", actions: ["Enregistrer ces encaissements dans votre fichier", "Faire le rapprochement à chaque fin de mois"] },
+};
+const MSG_FCFA = formateurs("XOF"); // les messages sont rédigés en FCFA, la devise de la PME
+const dateLongue = (d) => d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+const dateHeure = (d) => d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const ajouterJours = (d, j) => new Date(d.getTime() + j * 864e5);
+const remplir = (texte, vars) => texte.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m));
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+
+// ce que l'institution observe dans les données partagées : projection, signaux faibles, profil, rapprochement
+function pointsVigilance(e, f) {
+  const pts = [];
+  if (f.rupture) pts.push({ cle: "Tension de trésorerie", valeur: dateLongue(f.rupture.date), grave: true });
+  [...f.signaux].filter((s) => s.score < 65).sort((a, b) => a.score - b.score).forEach((s) => pts.push({ cle: s.nom, valeur: `indicateur à ${s.score}/100`, grave: s.score < 45 }));
+  const p = e.profil;
+  if (p && p.ventesTotal && p.creances / p.ventesTotal > 0.15) pts.push({ cle: "Ventes impayées", valeur: `${MSG_FCFA.montant(p.creances)}, soit ${pct(p.creances / p.ventesTotal)} des ventes du mois (${pluriel(p.nbCreances, "facture")})` });
+  if (e.rappro && e.rappro.nonEnregistre > 0) pts.push({ cle: "Encaissements non enregistrés", valeur: `${MSG_FCFA.montant(e.rappro.nonEnregistre)} (${pluriel(e.rappro.nb, "opération")})` });
+  return pts;
+}
+function niveauDefaut(e) {
+  if (e.dpd > 30) return "Action requise";
+  if (e.dpd > 0) return "Vigilance";
+  if (e.alertePrecoce) return e.joursAvantStress < 20 ? "Action requise" : e.joursAvantStress <= 45 ? "Vigilance" : "Conseil";
+  return "Conseil";
+}
+function rediger(e, instNom, conseiller, pts, modeles) {
+  const vars = { pme: e.nom, institution: instNom };
+  const lignes = pts.map((pt) => "– " + remplir(modeles[pt.cle].texte, { ...vars, valeur: pt.valeur }));
+  const suite = e.dpd === 0
+    ? "Aucune échéance n'est en retard : c'est le bon moment pour agir. Les actions ci-dessous peuvent vous aider, et je reste disponible pour en parler."
+    : "Nous souhaitons trouver avec vous la meilleure solution. Les actions ci-dessous sont une première piste, et je reste disponible pour en parler.";
+  return {
+    titre: pts.length === 1 ? remplir(modeles[pts[0].cle].titre, vars) : "Quelques points de vigilance sur votre trésorerie",
+    message: `Bonjour ${e.nom},\n\nEn suivant les données de trésorerie que vous partagez avec ${instNom}, nous avons relevé ${pts.length > 1 ? "quelques points de vigilance" : "un point de vigilance"} :\n${lignes.join("\n")}\n\n${suite}\n\n${conseiller} — ${instNom}`,
+    actions: [...new Set(pts.flatMap((pt) => modeles[pt.cle].actions.map((a) => a.trim()).filter(Boolean)))],
+  };
+}
+function NiveauChip({ niveau }) { const s = NIVEAUX[niveau]; return <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: s.bg, color: s.c, border: `1px solid ${s.bd}` }}>{niveau}</span>; }
+function EtatChip({ etat, icone }) { const s = ETATS_NOTIF[etat]; return <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: s.bg, color: s.c }}>{icone && <Send size={9} />}{etat}</span>; }
+const CHAMP = "w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none focus:border-[#0F766E]";
+function Etiquette({ children, droite }) { return <div className="mb-1.5 flex items-center justify-between gap-2 text-xs font-semibold" style={{ color: C.muted }}><span>{children}</span>{droite}</div>; }
+
+/* ---------- institution : points de vigilance et rédaction, sur la fiche emprunteur ---------- */
+function SectionRecommandation({ e, points, inst, modeles, notifs, onEnvoyer }) {
+  const [redaction, setRedaction] = useState(false);
+  const [envoye, setEnvoye] = useState(false);
+  const bloques = {}; // point → date du dernier envoi, s'il date de moins de DELAI_RELANCE jours
+  notifs.forEach((n) => { if ((new Date() - n.envoyeLe) / 864e5 < DELAI_RELANCE) n.points.forEach((cle) => { if (!bloques[cle] || n.envoyeLe > bloques[cle]) bloques[cle] = n.envoyeLe; }); });
+  const disponibles = points.filter((pt) => !bloques[pt.cle]);
+  return (
+    <Carte className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3"><Lightbulb size={18} className="mt-0.5 shrink-0" style={{ color: C.ambre }} />
+          <div><div className="text-sm font-semibold">Points de vigilance {points.length > 0 && <span className="font-normal" style={{ color: C.muted }}>· {points.length}</span>}</div>
+            <div className="mt-0.5 text-xs" style={{ color: C.muted }}>Ce que montrent les données partagées par l'emprunteur. Transformez-les en recommandation : vous relisez et ajustez avant l'envoi.</div></div></div>
+        {!redaction && disponibles.length > 0 && <button onClick={() => { setRedaction(true); setEnvoye(false); }} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}><Send size={14} /> Préparer une recommandation</button>}
+      </div>
+      {points.length === 0 ? <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: "#ECFDF5", color: C.vert }}>Aucun point de vigilance : les signaux sont au vert.</div> : (
+        <ul className="mt-4 divide-y rounded-lg border" style={{ borderColor: C.hairline }}>
+          {points.map((pt) => { const b = bloques[pt.cle]; return (
+            <li key={pt.cle} className="flex items-start gap-3 px-3 py-2.5 text-sm" style={{ borderColor: C.hairline }}>
+              <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: pt.grave ? C.rouge : C.ambre }} />
+              <div className="min-w-0 flex-1"><span className="font-medium">{pt.cle}</span> <span style={{ color: C.muted }}>· {pt.valeur}</span>
+                {b && <div className="text-[11px]" style={{ color: C.muted }}>Déjà signalé le {dateLongue(b)} — nouvel envoi possible à partir du {dateLongue(ajouterJours(b, DELAI_RELANCE))}</div>}</div>
+            </li>); })}
+        </ul>
+      )}
+      {envoye && <div className="mt-4 flex items-start gap-2 rounded-lg p-3 text-sm" style={{ background: "#ECFDF5", color: C.vert }}><CheckCircle2 size={16} className="mt-0.5 shrink-0" /> <span>Recommandation envoyée à {e.nom}. {e.isFocus ? "La PME la retrouve dans son espace, onglet Recommandations." : "Elle est enregistrée dans l'onglet Suivi."}</span></div>}
+      {redaction && <Redaction e={e} points={disponibles} inst={inst} modeles={modeles} onEnvoyer={(c) => { onEnvoyer(c); setRedaction(false); setEnvoye(true); }} onAnnuler={() => setRedaction(false)} />}
+      {notifs.length > 0 && (
+        <div className="mt-5"><div className="mb-2 text-xs font-semibold" style={{ color: C.muted }}>Messages envoyés à cet emprunteur</div>
+          <div className="divide-y rounded-lg border" style={{ borderColor: C.hairline }}>{notifs.map((n) => (
+            <div key={n.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs" style={{ borderColor: C.hairline }}><span style={{ color: C.muted }}>{dateHeure(n.envoyeLe)}</span><span className="min-w-0 flex-1 truncate font-medium">{n.titre}</span><NiveauChip niveau={n.niveau} /><EtatChip etat={n.statut} /></div>))}</div></div>
+      )}
+    </Carte>
+  );
+}
+function Redaction({ e, points, inst, modeles, onEnvoyer, onAnnuler }) {
+  const [choisis, setChoisis] = useState(() => points.slice(0, 3).map((pt) => pt.cle));
+  const [niveau, setNiveau] = useState(() => niveauDefaut(e));
+  const [delai, setDelai] = useState(() => DELAI_DEFAUT[niveauDefaut(e)]);
+  const [conseiller, setConseiller] = useState(inst.conseiller);
+  const [manuel, setManuel] = useState(null); // null : le brouillon suit les modèles ; sinon, texte retouché à la main
+  const [nouvelle, setNouvelle] = useState("");
+  const retenus = points.filter((pt) => choisis.includes(pt.cle));
+  const brouillon = manuel || (retenus.length ? rediger(e, inst.nom, conseiller, retenus, modeles) : { titre: "", message: "", actions: [] });
+  const modifier = (champ, v) => setManuel({ ...brouillon, [champ]: v });
+  const ajouterAction = () => { if (nouvelle.trim()) { modifier("actions", [...brouillon.actions, nouvelle.trim()]); setNouvelle(""); } };
+  const pret = retenus.length > 0 && brouillon.titre.trim() && brouillon.message.trim();
+  return (
+    <div className="mt-5 grid gap-6 border-t pt-5 lg:grid-cols-2" style={{ borderColor: C.hairline }}>
+      <div className="space-y-4">
+        <div className="text-sm font-semibold">Rédiger la recommandation</div>
+        <fieldset>
+          <legend className="mb-1.5 text-xs font-semibold" style={{ color: C.muted }}>Points à inclure</legend>
+          <div className="space-y-1.5">{points.map((pt) => (
+            <label key={pt.cle} className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 accent-[#0F766E]" checked={choisis.includes(pt.cle)} onChange={() => setChoisis(choisis.includes(pt.cle) ? choisis.filter((c) => c !== pt.cle) : [...choisis, pt.cle])} /><span>{pt.cle} <span style={{ color: C.muted }}>· {pt.valeur}</span></span></label>))}</div>
+          {manuel && <div className="mt-1.5 text-[11px]" style={{ color: C.muted }}>Message retouché à la main : il ne suit plus les points cochés.</div>}
+        </fieldset>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div><Etiquette>Niveau</Etiquette>
+            <div className="flex flex-wrap gap-1">{Object.keys(NIVEAUX).map((nv) => (
+              <button key={nv} onClick={() => { setNiveau(nv); setDelai(DELAI_DEFAUT[nv]); }} aria-pressed={niveau === nv} className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold" style={niveau === nv ? { background: NIVEAUX[nv].bg, color: NIVEAUX[nv].c, borderColor: NIVEAUX[nv].bd } : { borderColor: C.hairline, color: C.muted }}>{nv}</button>))}</div></div>
+          <div><Etiquette>Réponse souhaitée</Etiquette>
+            <select aria-label="Délai de réponse souhaité" value={delai} onChange={(ev) => setDelai(Number(ev.target.value))} className={CHAMP} style={{ borderColor: C.hairline }}><option value={0}>Sans délai</option><option value={7}>Sous 7 jours</option><option value={15}>Sous 15 jours</option><option value={30}>Sous 30 jours</option></select></div>
+        </div>
+        <div><Etiquette>Titre</Etiquette><input aria-label="Titre" value={brouillon.titre} onChange={(ev) => modifier("titre", ev.target.value)} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
+        <div><Etiquette droite={manuel && <button onClick={() => setManuel(null)} className="inline-flex items-center gap-1 font-medium" style={{ color: C.teal }}><RotateCcw size={11} /> Repartir des modèles</button>}>Message</Etiquette>
+          <textarea aria-label="Message" rows={11} value={brouillon.message} onChange={(ev) => modifier("message", ev.target.value)} className={CHAMP + " leading-relaxed"} style={{ borderColor: C.hairline }} /></div>
+        <div><Etiquette>Actions proposées</Etiquette>
+          <ul className="space-y-1.5">{brouillon.actions.map((a, i) => (
+            <li key={i} className="flex items-center gap-2"><input aria-label={`Action ${i + 1}`} value={a} onChange={(ev) => modifier("actions", brouillon.actions.map((x, j) => (j === i ? ev.target.value : x)))} className={CHAMP + " py-1.5"} style={{ borderColor: C.hairline }} />
+              <button onClick={() => modifier("actions", brouillon.actions.filter((_, j) => j !== i))} aria-label="Retirer cette action" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border" style={{ borderColor: C.hairline, color: C.muted }}><X size={14} /></button></li>))}</ul>
+          <div className="mt-1.5 flex gap-2"><input aria-label="Nouvelle action" value={nouvelle} onChange={(ev) => setNouvelle(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") ajouterAction(); }} placeholder="Ajouter une action…" className={CHAMP + " py-1.5"} style={{ borderColor: C.hairline }} />
+            <button onClick={ajouterAction} disabled={!nouvelle.trim()} className="inline-flex shrink-0 items-center gap-1 rounded-lg border px-3 text-xs font-semibold disabled:opacity-40" style={{ borderColor: C.hairline }}><Plus size={13} /> Ajouter</button></div></div>
+        <div><Etiquette>Signé par</Etiquette><input aria-label="Signé par" value={conseiller} onChange={(ev) => setConseiller(ev.target.value)} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
+      </div>
+      <div className="space-y-3">
+        <div className="text-sm font-semibold">Aperçu côté PME</div>
+        <CarteNotif apercu n={{ id: "apercu", instNom: inst.nom, niveau, delai, titre: brouillon.titre, message: brouillon.message, actions: brouillon.actions.filter((a) => a.trim()).map((texte) => ({ texte, fait: false })), points: retenus.map((pt) => pt.cle), envoyeLe: new Date(), statut: "Envoyée", reponse: null }} />
+        <div className="rounded-lg p-3 text-[11px] leading-relaxed" style={{ background: C.canvas, color: C.muted }}>
+          Rien n'est envoyé automatiquement : la recommandation part seulement quand vous cliquez sur « Envoyer ». Un même point ne peut pas être signalé deux fois en moins de {DELAI_RELANCE} jours.
+          {!e.isFocus && " Démo : seule la PME importée dispose d'un espace consultable ; pour cet emprunteur, l'envoi est enregistré dans le Suivi, sans réponse simulée."}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onAnnuler} className="rounded-lg border px-4 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}>Annuler</button>
+          <button disabled={!pret} onClick={() => onEnvoyer({ niveau, delai, conseiller, titre: brouillon.titre.trim(), message: brouillon.message.trim(), actions: brouillon.actions.map((a) => a.trim()).filter(Boolean), points: retenus.map((pt) => pt.cle) })} className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" style={{ background: C.vert }}><Send size={14} /> Envoyer à la PME</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- message tel que la PME le reçoit (aussi utilisé comme aperçu) ---------- */
+function CarteNotif({ n, apercu = false, onLire, onRepondre, onCocher, goVue }) {
+  const [ouvert, setOuvert] = useState(apercu);
+  const [mode, setMode] = useState(null);
+  const [texte, setTexte] = useState("");
+  const nv = NIVEAUX[n.niveau];
+  const nouveau = !apercu && n.statut === "Envoyée";
+  const echeance = n.delai ? ajouterJours(n.envoyeLe, n.delai) : null;
+  const liens = Object.values(Object.fromEntries(n.points.filter((cle) => ECRAN_POINT[cle]).map((cle) => [ECRAN_POINT[cle][0], ECRAN_POINT[cle]])));
+  const basculer = () => { if (!ouvert && n.statut === "Envoyée") onLire(n.id); setOuvert(!ouvert); };
+  const annuler = () => { setMode(null); setTexte(""); };
+  const entete = (
+    <>
+      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ background: nv.bg }}><Landmark size={16} style={{ color: nv.c }} /></div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]"><span className="font-semibold" style={{ color: C.ink }}>{n.instNom}</span><NiveauChip niveau={n.niveau} />{nouveau && <span className="rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ background: C.rouge }}>Nouveau</span>}<span style={{ color: C.muted }}>{dateHeure(n.envoyeLe)}</span></div>
+        <div className="mt-1 text-sm font-semibold">{n.titre || "Sans titre"}</div>
+      </div>
+    </>
+  );
+  return (
+    <Carte className="overflow-hidden" style={{ borderLeft: `3px solid ${nv.c}` }}>
+      {apercu ? <div className="flex items-start gap-3 p-4">{entete}</div>
+        : <button onClick={basculer} aria-expanded={ouvert} className="flex w-full items-start gap-3 p-4 text-left hover:bg-[#FAFBFA]">{entete}<ChevronDown size={16} className={"mt-2 shrink-0 transition-transform " + (ouvert ? "rotate-180" : "")} style={{ color: C.muted }} /></button>}
+      {ouvert && (
+        <div className="space-y-4 border-t px-4 pb-4 pt-3" style={{ borderColor: C.hairline }}>
+          <p className="whitespace-pre-line text-sm leading-relaxed">{n.message}</p>
+          {n.actions.length > 0 && (
+            <div><div className="mb-2 text-xs font-semibold">Actions proposées</div>
+              <ul className="space-y-1.5">{n.actions.map((a, i) => (
+                <li key={i}><label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 accent-[#0F766E]" checked={a.fait} disabled={apercu} onChange={() => onCocher(n.id, i)} /><span style={{ color: a.fait ? C.muted : C.ink, textDecoration: a.fait ? "line-through" : "none" }}>{a.texte}</span></label></li>))}</ul></div>
+          )}
+          {echeance && <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: nv.c }}><CalendarClock size={13} /> Réponse souhaitée avant le {dateLongue(echeance)}</div>}
+          {!apercu && liens.length > 0 && <div className="flex flex-wrap gap-3">{liens.map(([vue, lbl]) => <button key={vue} onClick={() => goVue(vue)} className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: C.teal }}>Voir « {lbl} » <ChevronRight size={13} /></button>)}</div>}
+          {n.statut === "Résolue" && <div className="text-xs font-medium" style={{ color: C.vert }}>Point clos par {n.instNom}.</div>}
+          {n.statut === "À escalader" && <div className="text-xs font-medium" style={{ color: C.ambre }}>Votre conseiller va vous recontacter.</div>}
+          {n.reponse ? (
+            <div className="rounded-lg p-3 text-xs" style={{ background: C.canvas }}><span className="font-semibold">Votre réponse · {libelleReponse(n.reponse.type)}</span> <span style={{ color: C.muted }}>· {dateHeure(n.reponse.le)}</span>{n.reponse.texte && <p className="mt-1 whitespace-pre-line text-sm">{n.reponse.texte}</p>}</div>
+          ) : mode ? (
+            <div className="space-y-2 rounded-lg border p-3" style={{ borderColor: C.hairline }}>
+              <div className="text-xs font-semibold">{libelleReponse(mode)}</div>
+              {mode === "precision" && <div className="flex flex-wrap gap-1.5">{PRECISIONS.map((pr) => <button key={pr} onClick={() => setTexte(texte ? texte + "\n" + pr : pr)} className="rounded-full border px-2.5 py-1 text-[11px]" style={{ borderColor: C.hairline, color: C.muted }}>{pr}</button>)}</div>}
+              <textarea rows={3} value={texte} onChange={(ev) => setTexte(ev.target.value)} placeholder={REPONSES.find((r) => r[0] === mode)[3]} aria-label={libelleReponse(mode)} className={CHAMP} style={{ borderColor: C.hairline }} />
+              <div className="flex justify-end gap-2"><button onClick={annuler} className="rounded-lg border px-3 py-1.5 text-xs font-medium" style={{ borderColor: C.hairline }}>Annuler</button>
+                <button onClick={() => { onRepondre(n.id, mode, texte.trim()); annuler(); }} disabled={!texte.trim()} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40" style={{ background: C.ink }}>Envoyer ma réponse</button></div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">{REPONSES.map(([id, lbl, Ic, aide]) => (
+              <button key={id} disabled={apercu} onClick={() => (aide ? setMode(id) : onRepondre(n.id, id, ""))} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:cursor-default" style={{ borderColor: C.hairline, color: C.ink }}><Ic size={13} style={{ color: C.teal }} /> {lbl}</button>))}</div>
+          )}
+        </div>
+      )}
+    </Carte>
+  );
+}
+
+/* ---------- PME : mes recommandations ---------- */
+function Recommandations({ notifs, onLire, onRepondre, onCocher, goVue }) {
+  const aTraiter = notifs.filter((n) => !n.reponse && n.statut !== "Résolue").length;
+  return (
+    <div className="space-y-5">
+      <div><h2 className="text-lg font-semibold">Mes recommandations</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Les conseils de vos institutions partenaires, établis à partir des données que vous leur partagez. Ils servent à agir tôt : vous pouvez répondre, proposer un plan ou demander un rendez-vous.</p></div>
+      {notifs.length === 0 ? <Vide icone={Bell} titre="Aucune recommandation pour l'instant" texte="Quand une institution avec qui vous partagez votre profil vous enverra un conseil, il apparaîtra ici." /> : (
+        <>
+          {aTraiter > 0 && <div className="text-xs font-semibold" style={{ color: C.ambre }}>{pluriel(aTraiter, "recommandation")} en attente de votre réponse</div>}
+          <div className="space-y-3">{notifs.map((n) => <CarteNotif key={n.id} n={n} onLire={onLire} onRepondre={onRepondre} onCocher={onCocher} goVue={goVue} />)}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------- institution : suivi des messages et modèles ---------- */
+function Suivi({ notifs, instNom, modeles, modelesPerso, setModele, resetModele, onCloturer, onOpen, setVue }) {
+  const [onglet, setOnglet] = useState("messages");
+  const [ouvert, setOuvert] = useState(null);
+  const nb = (f) => notifs.filter(f).length;
+  const reponses = nb((n) => n.reponse);
+  return (
+    <div className="space-y-5">
+      <div><h2 className="text-lg font-semibold">Suivi des recommandations</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Les messages envoyés par {instNom} à partir de l'alerte précoce, et les réponses des PME. Chaque envoi est relu par un conseiller et horodaté.</p></div>
+      <div className="flex gap-1">{[["messages", `Messages (${notifs.length})`], ["modeles", "Modèles"]].map(([id, lbl]) => (
+        <button key={id} onClick={() => setOnglet(id)} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: onglet === id ? C.ink : "#fff", color: onglet === id ? "#fff" : C.muted, border: `1px solid ${C.hairline}` }}>{lbl}</button>))}</div>
+      {onglet === "modeles" ? <Modeles instNom={instNom} modeles={modeles} modelesPerso={modelesPerso} setModele={setModele} resetModele={resetModele} />
+        : notifs.length === 0 ? <Vide icone={Send} titre="Aucune recommandation envoyée" texte="Ouvrez un emprunteur depuis l'Alerte précoce : ses points de vigilance y sont listés, prêts à devenir une recommandation." action="Voir l'alerte précoce" onAction={() => setVue("watch")} />
+        : (
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">{[["Envoyées", notifs.length, C.ink], ["Lues", nb((n) => n.statut !== "Envoyée"), C.teal], ["Réponses", reponses, C.ambre], ["Taux de réponse", pct(reponses / notifs.length), C.vert]].map(([l, v, c]) => (
+              <Carte key={l} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}</div>
+            <Carte><div className="divide-y" style={{ borderColor: C.hairline }}>{notifs.map((n) => <LigneSuivi key={n.id} n={n} ouvert={ouvert === n.id} onBasculer={() => setOuvert(ouvert === n.id ? null : n.id)} onCloturer={onCloturer} onOpen={onOpen} />)}</div></Carte>
+          </>
+        )}
+    </div>
+  );
+}
+function LigneSuivi({ n, ouvert, onBasculer, onCloturer, onOpen }) {
+  const clos = n.statut === "Résolue" || n.statut === "À escalader";
+  return (
+    <div style={{ borderColor: C.hairline }}>
+      <button onClick={onBasculer} aria-expanded={ouvert} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 text-left text-sm hover:bg-[#FAFBFA]">
+        <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-medium">{n.empNom}</span><NiveauChip niveau={n.niveau} /></div><div className="truncate text-[11px]" style={{ color: C.muted }}>{n.titre}</div></div>
+        <span className="text-[11px]" style={{ color: C.muted }}>{dateHeure(n.envoyeLe)}</span><EtatChip etat={n.statut} /><ChevronDown size={15} className={"transition-transform " + (ouvert ? "rotate-180" : "")} style={{ color: C.muted }} />
+      </button>
+      {ouvert && (
+        <div className="grid gap-5 px-5 pb-5 lg:grid-cols-[1.4fr_1fr]">
+          <div className="space-y-3">
+            <p className="whitespace-pre-line rounded-lg p-3 text-[13px] leading-relaxed" style={{ background: C.canvas }}>{n.message}</p>
+            {n.actions.length > 0 && <ul className="space-y-1 text-xs">{n.actions.map((a, i) => <li key={i} className="flex items-center gap-1.5" style={{ color: a.fait ? C.vert : C.muted }}>{a.fait ? <CheckCircle2 size={13} /> : <span className="mx-[2px] h-2.5 w-2.5 rounded-full border" style={{ borderColor: C.muted }} />} {a.texte}{a.fait && " — fait par la PME"}</li>)}</ul>}
+          </div>
+          <div className="space-y-3 text-xs">
+            {n.reponse ? (
+              <div className="rounded-lg p-3" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}><div className="font-semibold" style={{ color: C.ambre }}>Réponse de la PME · {libelleReponse(n.reponse.type)}</div>{n.reponse.texte && <p className="mt-1 whitespace-pre-line text-[13px]" style={{ color: C.ink }}>{n.reponse.texte}</p>}</div>
+            ) : <div className="rounded-lg p-3" style={{ background: C.canvas, color: C.muted }}>{n.simule ? "Démo : cet emprunteur n'a pas d'espace PME simulé, aucune réponse n'arrivera." : "En attente de la réponse de la PME."}</div>}
+            <div><div className="mb-1 font-semibold" style={{ color: C.muted }}>Historique</div>
+              <ol className="space-y-1">{n.historique.map((h, i) => <li key={i} className="flex flex-wrap gap-x-2"><span className="font-semibold" style={{ color: ETATS_NOTIF[h.statut].c }}>{h.statut}</span><span style={{ color: C.muted }}>{dateHeure(h.le)} · {h.par}</span></li>)}</ol></div>
+            <div className="flex items-center gap-1.5" style={{ color: C.muted }}><CalendarClock size={13} /> Revérification des signaux prévue le {dateLongue(ajouterJours(n.envoyeLe, DELAI_REVERIF))}</div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button onClick={() => onOpen(n.empId)} className="rounded-lg border px-3 py-1.5 font-semibold" style={{ borderColor: C.hairline }}>Ouvrir la fiche</button>
+              {!clos && <>
+                <button onClick={() => onCloturer(n.id, "Résolue")} className="rounded-lg px-3 py-1.5 font-semibold text-white" style={{ background: C.vert }}>Marquer résolue</button>
+                <button onClick={() => onCloturer(n.id, "À escalader")} className="rounded-lg border px-3 py-1.5 font-semibold" style={{ borderColor: "#FECACA", color: C.rouge }}>À escalader</button>
+              </>}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function Modeles({ instNom, modeles, modelesPerso, setModele, resetModele }) {
+  const variable = (v) => <code className="rounded bg-white px-1 text-[12px]" style={{ color: C.ink }}>{`{${v}}`}</code>;
+  return (
+    <div className="space-y-4">
+      <p className="text-sm leading-relaxed" style={{ color: C.muted }}>Un modèle par point de vigilance : il pré-remplit les recommandations de {instNom}, et le conseiller peut encore tout ajuster avant l'envoi. Variables : {variable("pme")} {variable("valeur")} {variable("institution")}. Les modifications s'appliquent aux prochains messages.</p>
+      <div className="grid gap-4 lg:grid-cols-2">{Object.keys(MODELES_DEFAUT).map((cle) => { const m = modeles[cle]; const perso = !!modelesPerso[cle]; return (
+        <Carte key={cle} className="space-y-3 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold">{cle}{perso && <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: C.canvas, color: C.teal }}>modifié</span>}</div>
+            {perso && <button onClick={() => resetModele(cle)} className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: C.muted }}><RotateCcw size={11} /> Réinitialiser</button>}
+          </div>
+          <div><Etiquette>Titre</Etiquette><input aria-label={`Titre — ${cle}`} value={m.titre} onChange={(ev) => setModele(cle, { ...m, titre: ev.target.value })} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
+          <div><Etiquette>Texte</Etiquette><textarea aria-label={`Texte — ${cle}`} rows={2} value={m.texte} onChange={(ev) => setModele(cle, { ...m, texte: ev.target.value })} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
+          <div><Etiquette>Actions proposées (une par ligne)</Etiquette><textarea aria-label={`Actions — ${cle}`} rows={3} value={m.actions.join("\n")} onChange={(ev) => setModele(cle, { ...m, actions: ev.target.value.split("\n") })} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
+        </Carte>); })}</div>
+    </div>
+  );
 }

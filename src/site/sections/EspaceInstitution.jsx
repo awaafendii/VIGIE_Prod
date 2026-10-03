@@ -1,4 +1,4 @@
-import { Layers, ShieldAlert, BadgeCheck, Building2 } from "lucide-react";
+import { Layers, ShieldAlert, BadgeCheck, Building2, Send } from "lucide-react";
 import { C } from "../theme.js";
 import { Section, EnTete, Reveal, Legende } from "../components/ui.jsx";
 import { ApercuPortefeuille } from "../components/Apercus.jsx";
@@ -8,6 +8,7 @@ const FONCTIONS = [
   { icone: ShieldAlert, nom: "Alerte précoce", texte: "Les emprunteurs à jour dont le score recule fortement, classés par sévérité × exposition, avec le délai estimé avant tension de trésorerie." },
   { icone: BadgeCheck, nom: "À valider", texte: "Les PME qui partagent leur profil avec votre établissement arrivent ici. Examinez score et trajectoire, puis validez ou écartez." },
   { icone: Building2, nom: "Fiche emprunteur", texte: "Encours, score et tendance, perte attendue, projection du solde et décomposition du score en six signaux." },
+  { icone: Send, nom: "Recommandations", texte: "Transformez une alerte en conseil : VIGIE pré-remplit le message à partir de vos modèles, un conseiller le relit, la PME répond depuis son espace et vous suivez chaque réponse.", large: true },
 ];
 
 export default function EspaceInstitution() {
@@ -17,8 +18,8 @@ export default function EspaceInstitution() {
         <div>
           <EnTete clair surtitre="Espace Institution" titre="Le risque de portefeuille, avant qu'il ne coûte." texte="Pour les institutions de microfinance, les banques et les prêteurs : une vue consolidée de l'encours, et une alerte sur les emprunteurs qui glissent alors que le PAR les dit sains." />
           <div className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {FONCTIONS.map(({ icone: Ic, nom, texte }, i) => (
-              <Reveal key={nom} delai={i * 70}>
+            {FONCTIONS.map(({ icone: Ic, nom, texte, large }, i) => (
+              <Reveal key={nom} delai={i * 70} className={large ? "sm:col-span-2" : ""}>
                 <div className="h-full rounded-xl border p-5" style={{ borderColor: "#24384F", background: "#132438" }}>
                   <Ic size={18} style={{ color: nom === "Alerte précoce" ? "#FCA5A5" : "#5EEAD4" }} />
                   <div className="mt-3 text-sm font-semibold text-white">{nom}</div>
