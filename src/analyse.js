@@ -288,7 +288,8 @@ export function analyserMois(E, S, soldeInitial = 0) {
       [clamp(100 - ratioDettes * 200)],
     ];
     const signaux = SIGNAUX.map(([nom, poids], j) => ({ nom, poids, score: valeurs[j][0], neutre: !!valeurs[j][1] }));
-    res.push({ cle, nbOps: e.length + s.length, ventes: p.ventesTotal, encaisse: p.encaisse, creances: p.creances, decaisse: p.decaisse, dettes: p.dettes, net: p.realise, cumul, dettesCumul, disponible, variation, joursTreso: Math.round(joursTreso), varCA, signaux, score: Math.round(signaux.reduce((a, x) => a + x.poids * x.score, 0)), profil: p });
+    const dates = [...e, ...s].map((x) => x.date).sort();
+    res.push({ cle, premiereOp: dates[0] || null, derniereOp: dates[dates.length - 1] || null, nbOps: e.length + s.length, ventes: p.ventesTotal, encaisse: p.encaisse, creances: p.creances, decaisse: p.decaisse, dettes: p.dettes, net: p.realise, cumul, dettesCumul, disponible, variation, joursTreso: Math.round(joursTreso), varCA, signaux, score: Math.round(signaux.reduce((a, x) => a + x.poids * x.score, 0)), profil: p });
   }
   res.forEach((m, i) => {
     const prev = res[i - 1];
@@ -313,5 +314,53 @@ export function diagnostiquer(mois) {
   const variationRecente = moyenne(mois.slice(-2).map((m) => m.variation)); // évolution de la trésorerie disponible
   const joursAvantTension = variationRecente < 0 ? Math.max(0, Math.round(der.disponible / (-variationRecente / 30))) : null;
   const premiereAlerte = mois.find((m) => m.etat === "Alerte précoce") || null;
-  return { niveau: der.etat, dernier: der, pic, chute: pic ? der.score - pic.score : 0, signauxEnBaisse, joursAvantTension, premiereAlerte, nbMois: mois.length };
+  return { niveau: der.etat, dernier: der, pic, chute: pic ? der.score - pic.score : 0, signauxEnBaisse, variationRecente, joursAvantTension, premiereAlerte, nbMois: mois.length };
+}
+
+/* ---------- repères dans le temps : tout est situé par rapport à la date du jour ---------- */
+export const JOUR = 864e5;
+export const debutJour = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+export const ajouterJoursA = (d, j) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + j);
+export const ecartJours = (a, b) => Math.round((debutJour(a) - debutJour(b)) / JOUR); // a − b, en jours
+export const depuisISO = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+export const relatif = (j) => (j === 0 ? "aujourd'hui" : j === 1 ? "demain" : j === -1 ? "hier" : j > 0 ? `dans ${j} jours` : `il y a ${-j} jours`);
+export const SEUILS_FRAICHEUR = { aJour: 35, aActualiser: 75 }; // jours écoulés depuis la dernière opération
+// une alerte sur le mois M devient visible le lendemain de sa clôture
+export const dateDetection = (cle) => ajouterJoursA(finDuMois(cle), 1);
+export function situerDansLeTemps(mois, diag, aujourdhui) {
+  if (!diag) return null;
+  const der = diag.dernier, finDonnees = finDuMois(der.cle);
+  const dateDonnees = der.derniereOp ? depuisISO(der.derniereOp) : finDonnees;
+  const joursDepuis = ecartJours(aujourdhui, dateDonnees);
+  const fraicheur = joursDepuis < 0 ? "dates futures" : joursDepuis <= SEUILS_FRAICHEUR.aJour ? "à jour" : joursDepuis <= SEUILS_FRAICHEUR.aActualiser ? "à actualiser" : "ancienne";
+  // début de l'état en cours (série de mois consécutifs dans le même état, hors « Sain »)
+  let k = mois.length - 1;
+  while (k > 0 && der.etat !== "Sain" && mois[k - 1].etat === der.etat) k--;
+  const debutEtat = der.etat !== "Sain" ? dateDetection(mois[k].cle) : null;
+  // projection de la trésorerie disponible jusqu'à aujourd'hui, au rythme des deux derniers mois
+  const dateTension = diag.joursAvantTension != null ? ajouterJoursA(finDonnees, diag.joursAvantTension) : null;
+  const joursProjetes = Math.max(0, ecartJours(aujourdhui, finDonnees));
+  return {
+    aujourdhui: debutJour(aujourdhui), debutFichier: mois[0].premiereOp ? depuisISO(mois[0].premiereOp) : depuisISO(`${mois[0].cle}-01`),
+    dateDonnees, joursDepuis, fraicheur,
+    debutEtat, joursDepuisEtat: debutEtat ? ecartJours(aujourdhui, debutEtat) : null,
+    premiereAlerte: diag.premiereAlerte ? dateDetection(diag.premiereAlerte.cle) : null,
+    dateTension, joursAvantTension: dateTension ? ecartJours(dateTension, aujourdhui) : null,
+    joursProjetes, disponibleEstime: der.disponible + (diag.variationRecente || 0) * (joursProjetes / 30),
+  };
+}
+// recale les dates d'un fichier de n mois (utilisé pour que l'exemple intégré couvre les derniers mois écoulés)
+export function decalerDates(feuilles, n) {
+  if (!n) return feuilles;
+  return feuilles.map((f) => {
+    const col = f.colonnes.find(estEnteteDate);
+    if (!col) return f;
+    const ordre = ordreDates(f.lignes.map((l) => l[col]));
+    return { ...f, lignes: f.lignes.map((l) => {
+      const iso0 = parseDate(l[col], ordre);
+      if (!iso0) return l;
+      const [y, m, d] = iso0.split("-").map(Number), t = y * 12 + (m - 1) + n, ny = Math.floor(t / 12), nm = (t % 12) + 1;
+      return { ...l, [col]: iso(ny, nm, Math.min(d, new Date(ny, nm, 0).getDate())) };
+    }) };
+  });
 }

@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback, createContext, useContext } from "react";
-import { lireClasseur, rolesAuto, autoMap, CHAMPS_ROLE, manquants, extraireFeuille, analyserMois, diagnostiquer, libelleMois, finDuMois, nomDepuisFichier, parseMontant, SEUIL_ALERTE, CHUTE_ALERTE, CHUTE_PIC } from "./analyse.js";
+import React, { useState, useMemo, useCallback, useEffect, createContext, useContext } from "react";
+import { lireClasseur, rolesAuto, autoMap, CHAMPS_ROLE, manquants, extraireFeuille, analyserMois, diagnostiquer, libelleMois, finDuMois, nomDepuisFichier, parseMontant, SEUIL_ALERTE, CHUTE_ALERTE, CHUTE_PIC, situerDansLeTemps, decalerDates, debutJour, ajouterJoursA, ecartJours, relatif, SEUILS_FRAICHEUR } from "./analyse.js";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Cell, ComposedChart, Line,
@@ -9,7 +9,7 @@ import {
   AlertTriangle, Wallet, TrendingUp, TrendingDown, Link2, Info, Table2, ShieldCheck,
   RefreshCw, ChevronRight, Landmark, Store, Smartphone, Banknote, CircleDollarSign,
   ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban, Coins,
-  Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X, Activity, Download,
+  Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X, Activity, Download, CalendarDays,
 } from "lucide-react";
 
 /* ============================================================
@@ -70,6 +70,13 @@ function texteTaux(code) {
 }
 const DeviseContext = createContext(formateurs("XOF"));
 const useMontants = () => useContext(DeviseContext);
+// date et heure réelles, rafraîchies en continu : alertes, prévisions et contrôles sont situés par rapport à elles
+const AujourdhuiContext = createContext({ maintenant: new Date(), aujourdhui: debutJour(new Date()) });
+const useAujourdhui = () => useContext(AujourdhuiContext);
+const premier = (t) => t.replace(/^1 /, "1er "); // « 1er septembre »
+const dateLongueAn = (d) => premier(d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }));
+const dateCourte = (d) => d.toLocaleDateString("fr-FR", d.getFullYear() === new Date().getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "2-digit" });
+const cleMois = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 const C = { ink: "#0E1B2C", canvas: "#F5F6F4", vert: "#047857", teal: "#0F766E", ambre: "#B45309", or: "#A16207", rouge: "#B91C1C", rougeF: "#7F1D1D", muted: "#5B6472", hairline: "#E3E6E2" };
 const STATUTS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Arriérés: { c: C.or, bg: "#FEFCE8", bd: "#FDE68A" }, PAR30: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, PAR90: { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" }, Douteux: { c: C.rougeF, bg: "#FEF2F2", bd: "#FCA5A5" } };
@@ -179,17 +186,16 @@ function genererPortefeuille(seed) {
     let statut = "Sain"; if (dpd > 180) statut = "Douteux"; else if (dpd > 90) statut = "PAR90"; else if (dpd > 30) statut = "PAR30"; else if (dpd > 0) statut = "Arriérés";
     const ap = dpd === 0 && scoreDelta <= -11 && score < 66; const js = ap ? Math.max(12, Math.round(60 + scoreDelta * 2 + (score - 45))) : null;
     const pd = Math.max(0.02, Math.min(0.6, 0.02 + risk * 0.42 + (dpd > 30 ? 0.15 : 0)));
-    arr.push({ id: i, nom, secteur, region, ead, taux, anciennete, score, scoreDelta, dpd, statut, alertePrecoce: ap, joursAvantStress: js, pd, lgd: 0.45, ecl: ead * pd * 0.45 });
+    arr.push({ id: i, nom, secteur, region, ead, taux, anciennete, score, scoreDelta, dpd, statut, alertePrecoce: ap, joursAvantStress: js, alerteAge: ap ? 1 + Math.floor(rng(7000 + i)() * 20) : null, pd, lgd: 0.45, ecl: ead * pd * 0.45 });
   }
   return arr;
 }
 // la PME importée, construite en emprunteur-vedette à partir de l'analyse mensuelle de son fichier
-function construireVedette({ mois, diag }, nomFocus, releve) {
+function construireVedette({ mois, diag }, nomFocus, releve, temps) {
   const der = diag.dernier, sc = der.score;
   const pd = Math.max(0.02, Math.min(0.6, 0.02 + (100 - sc) / 100 * 0.42));
   const alerte = der.etat === "Alerte précoce";
-  const dateTension = diag.joursAvantTension != null ? new Date(finDuMois(der.cle).getTime() + diag.joursAvantTension * 864e5) : null;
-  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta: der.delta ?? 0, dpd: 0, statut: "Sain", alertePrecoce: alerte, joursAvantStress: alerte ? diag.joursAvantTension : null, dateTension, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil: der.profil, signaux: der.signaux, histo: mois.map((m) => ({ mois: libelleMois(m.cle), score: m.score })), rappro: releve ? { nonEnregistre: releve.montantNonEnreg, nb: releve.releveOrphelins.length } : null };
+  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta: der.delta ?? 0, dpd: 0, statut: "Sain", alertePrecoce: alerte, joursAvantStress: alerte ? temps.joursAvantTension : null, dateTension: temps.dateTension, alerteDepuis: alerte ? temps.debutEtat : null, donneesDu: temps.dateDonnees, joursDepuisDonnees: temps.joursDepuis, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil: der.profil, signaux: der.signaux, histo: mois.map((m) => ({ mois: libelleMois(m.cle), score: m.score })), rappro: releve ? { nonEnregistre: releve.montantNonEnreg, nb: releve.releveOrphelins.length } : null };
 }
 function agreger(pf) {
   const enc = pf.reduce((a, e) => a + e.ead, 0); const exp = (f) => pf.filter(f).reduce((a, e) => a + e.ead, 0);
@@ -230,6 +236,16 @@ export default function App() {
   const [impEtape, setImpEtape] = useState(0);
   const [releveAjoute, setReleveAjoute] = useState(null);
   const [devise, setDevise] = useState("XOF");
+  const [maintenant, setMaintenant] = useState(() => new Date());
+  useEffect(() => { // horloge en temps réel (et resynchronisation au retour sur l'onglet)
+    const maj = () => setMaintenant(new Date());
+    const t = setInterval(maj, 30000);
+    window.addEventListener("focus", maj);
+    return () => { clearInterval(t); window.removeEventListener("focus", maj); };
+  }, []);
+  const jour = maintenant.toDateString();
+  const aujourdhui = useMemo(() => debutJour(maintenant), [jour]); // eslint-disable-line react-hooks/exhaustive-deps
+  const horloge = useMemo(() => ({ maintenant, aujourdhui }), [maintenant, aujourdhui]);
   const formats = useMemo(() => formateurs(devise), [devise]);
   const [notifs, setNotifs] = useState([]); // recommandations envoyées, la plus récente en premier
   const [modeles, setModeles] = useState({}); // modèles modifiés, par institution
@@ -245,17 +261,19 @@ export default function App() {
   }, [chargerSource]);
   const chargerFichier = useCallback(async (file, options = {}) => {
     try {
-      const { feuilles, nomsFeuilles } = lireClasseur(await file.arrayBuffer(), file.name);
+      const lu = lireClasseur(await file.arrayBuffer(), file.name);
+      const feuilles = decalerDates(lu.feuilles, options.decalerMois || 0), nomsFeuilles = lu.nomsFeuilles;
       if (!feuilles.length) { setErreurImport(`Aucune feuille exploitable dans « ${file.name} » : VIGIE cherche une ligne d'en-tête contenant une colonne de date (Date, Jour, Date opération…).`); return; }
       const aRappro = nomsFeuilles.some((n) => /rappro|relev|lettr/i.test(n));
-      chargerSource({ fichier: file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
+      chargerSource({ fichier: options.decalerMois ? `${file.name} (dates recalées sur les 6 derniers mois)` : file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
     } catch (e) { setErreurImport(`Lecture impossible de « ${file.name} » : fichier protégé, endommagé ou d'un format non pris en charge.`); }
   }, [chargerSource]);
   const chargerExempleMensuel = useCallback(async () => {
     const ex = EXEMPLES_FICHIERS[0];
     try {
       const rep = await fetch(ex.url); if (!rep.ok) throw new Error(rep.statusText);
-      await chargerFichier(new File([await rep.blob()], ex.fichier), { entreprise: "Quincaillerie Ndar", soldeInitial: 4500000 });
+      const d = new Date(), decalerMois = d.getFullYear() * 12 + d.getMonth() - 1 - (2026 * 12 + 5); // le fichier s'arrête en juin 2026 : on le fait finir le mois dernier
+      await chargerFichier(new File([await rep.blob()], ex.fichier), { entreprise: "Quincaillerie Ndar", soldeInitial: 4500000, decalerMois });
     } catch (e) { setErreurImport("Impossible de charger le fichier d'exemple : vérifiez la connexion."); }
   }, [chargerFichier]);
 
@@ -279,8 +297,10 @@ export default function App() {
   const profil = resultat?.profil || null;
   const nomFocus = source ? source.entreprise.trim() || "Ma PME" : "";
   const instNom = INSTITUTIONS.find((i) => i.id === instActive).nom;
-  const vedette = useMemo(() => (resultat?.diag ? construireVedette(resultat, nomFocus, releveAjoute) : null), [resultat, nomFocus, releveAjoute]);
-  const book = useMemo(() => genererPortefeuille(SEEDS[instActive]), [instActive]);
+  const temps = useMemo(() => (resultat?.diag ? situerDansLeTemps(resultat.mois, resultat.diag, aujourdhui) : null), [resultat, aujourdhui]);
+  const vedette = useMemo(() => (resultat?.diag ? construireVedette(resultat, nomFocus, releveAjoute, temps) : null), [resultat, nomFocus, releveAjoute, temps]);
+  // portefeuille simulé : alertes et tensions datées à partir d'aujourd'hui
+  const book = useMemo(() => genererPortefeuille(SEEDS[instActive]).map((e) => ({ ...e, alerteDepuis: e.alerteAge ? ajouterJoursA(aujourdhui, -e.alerteAge) : null, dateTension: e.joursAvantStress != null ? ajouterJoursA(aujourdhui, e.joursAvantStress) : null })), [instActive, aujourdhui]);
   const partageActive = !!vedette && partages.includes(instActive);
   const vedetteValidee = (valides[instActive] || []).includes(0);
   const estEcarte = (rejetes[instActive] || []).includes(0);
@@ -314,6 +334,7 @@ export default function App() {
 
   return (
     <DeviseContext.Provider value={formats}>
+    <AujourdhuiContext.Provider value={horloge}>
     <div style={{ background: C.canvas, minHeight: "100vh", color: C.ink }} className="font-sans antialiased">
       <header style={{ background: C.ink }} className="px-4 py-3 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
@@ -324,6 +345,9 @@ export default function App() {
             {espace === "inst" && (<select value={instActive} onChange={(e) => { setInstActive(e.target.value); setSel(null); }} className="ml-1 rounded-md px-2 py-1 text-xs font-semibold text-white outline-none" style={{ background: "#1C2E44" }}>{INSTITUTIONS.map((i) => <option key={i.id} value={i.id} style={{ color: C.ink }}>{i.nom}</option>)}</select>)}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs" style={{ background: "#1C2E44", color: "#9AA7B8" }} title="Date et heure actuelles : alertes, prévisions et contrôles sont calculés par rapport à elles">
+            <CalendarDays size={14} /><span className="font-semibold text-white">{maintenant.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span><span className="hidden sm:inline">· {maintenant.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
           {espace === "pme" && importe && (
             <button onClick={() => setPmeVue("recommandations")} aria-label={nonLues ? `${nonLues} recommandation(s) non lue(s)` : "Recommandations"} className="relative grid h-8 w-8 place-items-center rounded-lg" style={{ background: "#1C2E44" }}>
               <Bell size={15} style={{ color: nonLues ? "#fff" : "#9AA7B8" }} />
@@ -374,8 +398,8 @@ export default function App() {
         )}
         {espace === "pme" ? (
           pmeVue === "import" ? <Import etape={impEtape} setEtape={setImpEtape} source={source} roles={roles} setRoles={setRoles} maps={maps} setMaps={setMaps} resultat={resultat} soldeSaisi={soldeSaisi} setSoldeSaisi={setSoldeSaisi} setEntreprise={(nom) => setSource({ ...source, entreprise: nom })} erreur={erreurImport} onExemple={chargerExemple} onExempleMensuel={chargerExempleMensuel} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); setErreurImport(null); }} goVue={setPmeVue} />
-            : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} moisCourant={resultat.moisCourant} nbMois={resultat.mois.length} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-            : pmeVue === "analyse" ? (importe ? <AnalyseMensuelle resultat={resultat} entreprise={nomFocus} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+            : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} moisCourant={resultat.moisCourant} nbMois={resultat.mois.length} temps={temps} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+            : pmeVue === "analyse" ? (importe ? <AnalyseMensuelle resultat={resultat} entreprise={nomFocus} temps={temps} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "rapprochement" ? (importe ? <Rapprochement hasReleve={hasReleve} recon={source.recon} releveAjoute={releveAjoute} onAjouter={ajouterReleve} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "recommandations" ? (importe ? <Recommandations notifs={notifsPME} onLire={lireNotif} onRepondre={repondreNotif} onCocher={cocherAction} goVue={setPmeVue} /> : <PromptImport goImport={() => setPmeVue("import")} />)
                 : (importe ? <Financement profil={profil} histo={vedette.histo} goVue={setPmeVue} institutions={INSTITUTIONS} partages={partages} setPartages={setPartages} valides={valides} /> : <PromptImport goImport={() => setPmeVue("import")} />)
@@ -388,6 +412,7 @@ export default function App() {
       </main>
 
     </div>
+    </AujourdhuiContext.Provider>
     </DeviseContext.Provider>
   );
 }
@@ -424,6 +449,8 @@ function Import({ etape, setEtape, source, roles, setRoles, maps, setMaps, resul
 }
 function Depot({ onFichier, onExemple, onExempleMensuel, erreur }) {
   const [drag, setDrag] = useState(false);
+  const { aujourdhui } = useAujourdhui();
+  const finEx = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth() - 1, 1), debutEx = new Date(finEx.getFullYear(), finEx.getMonth() - 5, 1);
   const exemple = (onClick, Ic, couleur, titre, texte) => (
     <button onClick={onClick} className="flex items-center gap-3 rounded-xl border bg-white p-4 text-left hover:bg-[#FAFBFA]" style={{ borderColor: C.hairline }}>
       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg" style={{ background: "#F0F5F4" }}><Ic size={18} style={{ color: couleur }} /></div>
@@ -440,7 +467,7 @@ function Depot({ onFichier, onExemple, onExempleMensuel, erreur }) {
       {erreur && <div className="flex items-start gap-2 rounded-lg p-3 text-sm" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: C.rouge }}><AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erreur}</div>}
       <div className="flex items-center gap-3"><div className="h-px flex-1" style={{ background: C.hairline }} /><span className="text-xs" style={{ color: C.muted }}>ou essayez un exemple</span><div className="h-px flex-1" style={{ background: C.hairline }} /></div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {exemple(onExempleMensuel, Activity, C.rouge, "6 mois, en dégradation", "Quincaillerie Ndar · janv. → juin 2026")}
+        {exemple(onExempleMensuel, Activity, C.rouge, "6 derniers mois, en dégradation", `Quincaillerie Ndar · ${libelleMois(cleMois(debutEx))} → ${libelleMois(cleMois(finEx))}`)}
         {exemple(() => onExemple(true), FileSpreadsheet, C.teal, "Un mois, fichier complet", "NPM Multiservices · avec rapprochement")}
         {exemple(() => onExemple(false), Table2, C.ambre, "Un mois, sans rapprochement", "NPM Multiservices · ventes + dépenses")}
       </div>
@@ -551,7 +578,9 @@ function Validation({ resultat, soldeSaisi, setSoldeSaisi, onBack, onNext }) {
 }
 function ProfilImport({ resultat, onBack, onReset, goVue }) {
   const { court } = useMontants();
+  const { aujourdhui } = useAujourdhui();
   const { profil: p, mois, diag } = resultat;
+  const t = situerDansLeTemps(mois, diag, aujourdhui);
   const st = ETATS_MOIS[diag.niveau];
   return (
     <div className="space-y-5">
@@ -562,7 +591,7 @@ function ProfilImport({ resultat, onBack, onReset, goVue }) {
       </div>
       <div className="flex flex-wrap items-center gap-3 rounded-xl p-4" style={{ background: st.bg, border: `1px solid ${st.bd}` }}>
         {diag.niveau === "Sain" ? <CheckCircle2 size={18} style={{ color: st.c }} /> : <ShieldAlert size={18} style={{ color: st.c }} />}
-        <div className="flex-1 text-sm"><span className="font-semibold" style={{ color: st.c }}>{diag.niveau === "Sain" ? "Import terminé." : diag.niveau === "Alerte précoce" ? "Alerte précoce détectée." : "Point de vigilance détecté."}</span> <span style={{ color: C.muted }}>Score de {diag.dernier.score}/100 en {libelleMois(diag.dernier.cle, true)}{diag.pic ? `, contre ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)}` : ""}.</span></div>
+        <div className="flex-1 text-sm"><span className="font-semibold" style={{ color: st.c }}>{diag.niveau === "Sain" ? "Import terminé." : diag.niveau === "Alerte précoce" ? "Alerte précoce détectée." : "Point de vigilance détecté."}</span> <span style={{ color: C.muted }}>Score de {diag.dernier.score}/100 en {libelleMois(diag.dernier.cle, true)}{diag.pic ? `, contre ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)}` : ""}. Dernière opération le {dateLongueAn(t.dateDonnees)}, {relatif(-t.joursDepuis)}.</span></div>
         <button onClick={() => goVue("analyse")} className="text-sm font-semibold" style={{ color: C.teal }}>Voir l'analyse mois par mois →</button>
       </div>
       <div className="flex flex-wrap justify-between gap-2">
@@ -580,7 +609,41 @@ function ProfilImport({ resultat, onBack, onReset, goVue }) {
 const ETATS_MOIS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Vigilance: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, "Alerte précoce": { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" } };
 const couleurSignal = (s) => (s >= 65 ? C.vert : s >= 45 ? C.or : C.rouge);
 function EtatMois({ etat }) { const s = ETATS_MOIS[etat]; return <span className="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: s.bg, color: s.c, border: `1px solid ${s.bd}` }}>{etat}</span>; }
-function AnalyseMensuelle({ resultat, entreprise }) {
+const COULEUR_FRAICHEUR = { "à jour": C.vert, "à actualiser": C.ambre, ancienne: C.rouge, "dates futures": C.ambre };
+function ReperesTemps({ temps: t, diag }) {
+  const { montant } = useMontants();
+  const { maintenant } = useAujourdhui();
+  const der = diag.dernier, enAlerte = der.etat !== "Sain", couleurEtat = enAlerte ? ETATS_MOIS[der.etat].c : C.vert;
+  const tuiles = [
+    ["Aujourd'hui", maintenant.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }), `${maintenant.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} · temps réel`, C.teal],
+    ["Données du fichier", `jusqu'au ${dateLongueAn(t.dateDonnees)}`, `${relatif(-t.joursDepuis)} · ${t.fraicheur}`, COULEUR_FRAICHEUR[t.fraicheur]],
+    [enAlerte ? der.etat : "Alerte précoce", t.debutEtat ? `active depuis le ${dateLongueAn(t.debutEtat)}` : "aucune en cours", t.debutEtat ? relatif(-t.joursDepuisEtat) : "score stable ou en hausse", couleurEtat],
+    ["Prévision de tension", t.dateTension ? `vers le ${dateLongueAn(t.dateTension)}` : "aucune", t.dateTension ? (t.joursAvantTension >= 0 ? relatif(t.joursAvantTension) : `dépassée · ${relatif(t.joursAvantTension)}`) : "trésorerie disponible stable ou en hausse", t.dateTension ? C.rouge : C.vert],
+  ];
+  const jalons = [["Début du fichier", t.debutFichier, C.muted], t.debutEtat && [der.etat, t.debutEtat, couleurEtat], ["Dernière donnée", t.dateDonnees, C.ink], ["Aujourd'hui", t.aujourdhui, C.teal], t.dateTension && ["Tension prévue", t.dateTension, C.rouge]].filter(Boolean).sort((a, b) => a[1] - b[1]);
+  const min = jalons[0][1], max = jalons[jalons.length - 1][1], pos = (d) => (max > min ? ((d - min) / (max - min)) * 100 : 50);
+  return (
+    <Carte className="p-5">
+      <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><CalendarDays size={16} style={{ color: C.teal }} /> Repères dans le temps</div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{tuiles.map(([l, v, sous, c]) => (
+        <div key={l} className="rounded-lg p-3" style={{ background: C.canvas }}><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-0.5 text-sm font-semibold">{v}</div><div className="text-[11px] font-semibold" style={{ color: c }}>{sous}</div></div>))}</div>
+      <div className="relative mx-3 mb-11 mt-12 hidden h-1 rounded-full sm:block" style={{ background: "#CBD2CC" }} role="img" aria-label={"Frise : " + jalons.map(([l, d]) => `${l} ${dateLongueAn(d)}`).join(", ")}>
+        {jalons.map(([l, d, c], i) => { const x = pos(d), ancre = x < 10 ? "left-0" : x > 90 ? "right-0 text-right" : "left-1/2 -translate-x-1/2 text-center"; return (
+          <div key={l} className="absolute" style={{ left: `${x}%`, top: -6 }}>
+            <div className="-ml-2 h-4 w-4 rounded-full border-[3px] bg-white" style={{ borderColor: c }} />
+            <div className={"absolute whitespace-nowrap text-[10px] leading-tight " + ancre + (i % 2 ? " top-6" : " bottom-6")}><div className="font-semibold" style={{ color: c }}>{l}</div><div style={{ color: C.muted }}>{dateCourte(d)}</div></div>
+          </div>); })}
+      </div>
+      {t.fraicheur !== "à jour" && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg p-3 text-xs leading-relaxed sm:mt-0" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" style={{ color: C.ambre }} />
+          <span>{t.fraicheur === "dates futures" ? "Certaines dates du fichier sont postérieures à aujourd'hui : vérifiez la colonne de date ou l'horloge de l'appareil." : <>Les données s'arrêtent au {dateLongueAn(t.dateDonnees)}, {relatif(-t.joursDepuis)} : l'analyse décrit la situation à cette date, pas celle d'aujourd'hui. Si la tendance des deux derniers mois s'est poursuivie, la trésorerie disponible serait aujourd'hui d'environ <span className="font-semibold">{montant(t.disponibleEstime)}</span> — à confirmer avec un fichier à jour.</>}</span>
+        </div>
+      )}
+    </Carte>
+  );
+}
+function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
   const { montant, court } = useMontants();
   const { mois, diag, solde, soldeDetecte, soldeSaisi } = resultat;
   const st = ETATS_MOIS[diag.niveau], der = diag.dernier;
@@ -589,8 +652,8 @@ function AnalyseMensuelle({ resultat, entreprise }) {
   const phrases = [
     diag.pic ? `Le score est passé de ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)} à ${der.score} en ${libelleMois(der.cle, true)} (${diag.chute} points).`
       : mois.length === 1 ? `Votre fichier couvre un seul mois (${libelleMois(der.cle, true)}) : la tendance apparaîtra dès qu'il contiendra au moins deux mois.` : `Score de ${der.score}/100 en ${libelleMois(der.cle, true)}, sans baisse en cours.`,
-    diag.premiereAlerte && `VIGIE aurait déclenché l'alerte précoce dès ${libelleMois(diag.premiereAlerte.cle, true)}.`,
-    diag.joursAvantTension != null && (diag.joursAvantTension === 0 ? "La trésorerie disponible est déjà épuisée au rythme actuel." : `Au rythme des deux derniers mois, la trésorerie disponible serait épuisée dans environ ${diag.joursAvantTension} jours.`),
+    t.premiereAlerte && `VIGIE aurait déclenché l'alerte précoce dès le ${dateLongueAn(t.premiereAlerte)} (données de ${libelleMois(diag.premiereAlerte.cle, true)}), ${relatif(-ecartJours(t.aujourdhui, t.premiereAlerte))}.`,
+    t.dateTension && (t.joursAvantTension >= 0 ? `Au rythme des deux derniers mois, la trésorerie disponible serait épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)}.` : `Au rythme des deux derniers mois, la trésorerie disponible aurait été épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)} : sans données plus récentes, la situation actuelle est à vérifier en priorité.`),
   ].filter(Boolean);
   const Point = ({ cx, cy, payload }) => <circle cx={cx} cy={cy} r={4.5} fill="#fff" stroke={ETATS_MOIS[payload.etat].c} strokeWidth={2.5} />;
   return (
@@ -606,6 +669,7 @@ function AnalyseMensuelle({ resultat, entreprise }) {
           <div className="sm:text-right"><div className="text-[11px]" style={{ color: C.muted }}>Score de {libelleMois(der.cle)}</div><div className="font-serif text-4xl font-semibold tabular-nums" style={{ color: st.c }}>{der.score}</div>{der.delta != null && <div className="text-xs"><Trend delta={der.delta} /> <span style={{ color: C.muted }}>sur un mois</span></div>}</div>
         </div>
       </div>
+      <ReperesTemps temps={t} diag={diag} />
       <Carte className="p-5">
         <div className="mb-1 text-sm font-semibold">Encaissements, décaissements et score</div>
         <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]" style={{ color: C.muted }}><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: C.vert }} /> encaissé</span><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: "#F2A7A7" }} /> décaissé</span><span className="flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: C.teal }} /> score (échelle de droite)</span><span className="flex items-center gap-1"><span className="h-0 w-3 border-t border-dashed" style={{ borderColor: C.rouge }} /> seuil d'alerte ({SEUIL_ALERTE})</span></div>
@@ -662,11 +726,11 @@ function AnalyseMensuelle({ resultat, entreprise }) {
 }
 
 /* ============================================================ PME : TRÉSORERIE ============================================================ */
-function Tresorerie({ profil: p, moisCourant, nbMois }) {
+function Tresorerie({ profil: p, moisCourant, nbMois, temps }) {
   const { montant, court } = useMontants();
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Ma trésorerie · {libelleMois(moisCourant, true)}</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce qui est réellement entré, ce qui reste à encaisser, et votre position si tout se règle{nbMois > 1 ? ` — dernier des ${nbMois} mois de votre fichier (voir l'onglet Analyse pour l'évolution)` : ""}.</p></div>
+      <div><h2 className="text-lg font-semibold">Ma trésorerie · {libelleMois(moisCourant, true)}</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce qui est réellement entré, ce qui reste à encaisser, et votre position si tout se règle{nbMois > 1 ? ` — dernier des ${nbMois} mois de votre fichier (voir l'onglet Analyse pour l'évolution)` : ""}. Données jusqu'au {dateLongueAn(temps.dateDonnees)}, {relatif(-temps.joursDepuis)}{temps.fraicheur !== "à jour" ? " : la situation d'aujourd'hui peut être différente" : ""}.</p></div>
       <Carte className="p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div><div className="text-xs font-medium" style={{ color: C.muted }}>Trésorerie nette réalisée (mois)</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.realise >= 0 ? C.teal : C.rouge }}>{montant(p.realise)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>encaissé − décaissé, hors impayés</div></div>
@@ -865,18 +929,19 @@ function LigneWL({ e, onOpen, notif }) {
   return (
     <button onClick={() => onOpen(e.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left text-sm hover:bg-[#FAFBFA]">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-serif text-sm font-bold" style={{ background: "#F0F5F4", color: C.teal }}>{e.score}</div>
-      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-medium">{e.nom}</span>{e.isFocus && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#F0F5F4", color: C.teal }}><Link2 size={10} /> partagé</span>}{notif && <EtatChip etat={notif.statut} icone />}</div><div className="text-[11px]" style={{ color: C.muted }}>{e.secteur} · {e.region}</div></div>
-      <div className="hidden text-right sm:block"><div className="text-[11px]" style={{ color: C.muted }}>stress</div><div className="text-sm font-semibold" style={{ color: C.rouge }}>{e.joursAvantStress != null ? `J+${e.joursAvantStress}` : "—"}</div></div>
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-medium">{e.nom}</span>{e.isFocus && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#F0F5F4", color: C.teal }}><Link2 size={10} /> partagé</span>}{notif && <EtatChip etat={notif.statut} icone />}</div><div className="text-[11px]" style={{ color: C.muted }}>{e.secteur} · {e.region}{e.alerteDepuis && ` · alerte depuis le ${dateCourte(e.alerteDepuis)}`}</div></div>
+      <div className="hidden text-right sm:block"><div className="text-[11px]" style={{ color: C.muted }}>tension</div><div className="text-sm font-semibold" style={{ color: C.rouge }}>{e.joursAvantStress == null ? "—" : e.joursAvantStress < 0 ? "dépassée" : `J+${e.joursAvantStress}`}</div>{e.dateTension && <div className="text-[10px]" style={{ color: C.muted }}>{dateCourte(e.dateTension)}</div>}</div>
       <div className="hidden sm:block"><Trend delta={e.scoreDelta} /></div>
       <div className="text-right"><div className="font-semibold tabular-nums">{court(e.ead)}</div><div className="text-[11px]" style={{ color: C.muted }}>encours</div></div><ChevronRight size={16} style={{ color: C.muted }} />
     </button>
   );
 }
 function Watch({ agg, onOpen, notifsParEmp }) {
+  const { aujourdhui } = useAujourdhui();
   const { court } = useMontants();
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition. Ouvrez un emprunteur pour lui envoyer une recommandation.</p></div>
+      <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition. Situation au {dateLongueAn(aujourdhui)} : délais de tension comptés à partir d'aujourd'hui. Ouvrez un emprunteur pour lui envoyer une recommandation.</p></div>
       <div className="grid grid-cols-3 gap-4">{[["Signalés", agg.watchlist.length, C.rouge], ["Exposition", court(agg.expoAlerte), C.ambre], ["Part encours", pct(agg.expoAlerte / agg.encoursTotal), C.or]].map(([l, v, c], i) => (<Carte key={i} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}</div>
       <Carte><div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} notif={notifsParEmp[e.id]} />)}</div></Carte>
     </div>
@@ -932,15 +997,16 @@ function AValider({ candidats, onOpen, onValider, onEcarter, instNom }) {
 }
 function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, inst, modeles, notifs, onEnvoyer }) {
   const { montant, court } = useMontants();
-  const f = useMemo(() => ficheData(e), [e]);
+  const { aujourdhui } = useAujourdhui();
+  const f = useMemo(() => ficheData(e, aujourdhui), [e, aujourdhui]);
   const partage = e.isFocus ? partageActive : true;
-  const points = useMemo(() => pointsVigilance(e, f), [e, f]);
+  const points = useMemo(() => pointsVigilance(e, f, aujourdhui), [e, f, aujourdhui]);
   return (
     <div className="space-y-5">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium" style={{ color: C.teal }}><ArrowLeft size={15} /> Retour au portefeuille</button>
       <Carte className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">{e.nom}</h2><StatutChip statut={e.statut} />{e.alertePrecoce && partage && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: "#FEF2F2", color: C.rouge, border: "1px solid #FECACA" }}><ShieldAlert size={11} /> Alerte précoce</span>}</div>
+          <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">{e.nom}</h2><StatutChip statut={e.statut} />{e.alertePrecoce && partage && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: "#FEF2F2", color: C.rouge, border: "1px solid #FECACA" }}><ShieldAlert size={11} /> Alerte précoce{e.alerteDepuis ? ` · depuis le ${dateCourte(e.alerteDepuis)} (${relatif(-ecartJours(aujourdhui, e.alerteDepuis))})` : ""}</span>}</div>
             <div className="mt-1 text-sm" style={{ color: C.muted }}>{e.secteur} · {e.region} · client depuis {e.anciennete} mois · taux {pct(e.taux, 1)}</div></div>
           <div className="flex flex-wrap gap-6">
             <div className="text-right"><div className="text-[11px]" style={{ color: C.muted }}>Encours (EAD)</div><div className="font-serif text-2xl font-semibold tabular-nums">{court(e.ead)}</div></div>
@@ -948,7 +1014,7 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
             {partage && <div className="text-right"><div className="text-[11px]" style={{ color: C.muted }}>Perte attendue</div><div className="font-serif text-2xl font-semibold tabular-nums" style={{ color: C.ambre }}>{court(e.ecl)}</div><div className="text-[10px]" style={{ color: C.muted }}>PD {pct(e.pd)} · LGD {pct(e.lgd)}</div></div>}
           </div>
         </div>
-        {e.isFocus && <div className="mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: partage ? "#F0F5F4" : "#FFFBEB", color: partage ? C.teal : C.ambre, border: `1px solid ${partage ? C.hairline : "#FDE68A"}` }}><Link2 size={13} /> {partage ? "Profil partagé par l'emprunteur." : "Profil non partagé — accès limité à l'encours."}</div>}
+        {e.isFocus && <div className="mt-4 flex items-center gap-2 rounded-lg px-3 py-2 text-[11px]" style={{ background: partage ? "#F0F5F4" : "#FFFBEB", color: partage ? C.teal : C.ambre, border: `1px solid ${partage ? C.hairline : "#FDE68A"}` }}><Link2 size={13} /> {partage ? `Profil partagé par l'emprunteur${e.donneesDu ? ` · données jusqu'au ${dateLongueAn(e.donneesDu)} (${relatif(-e.joursDepuisDonnees)})` : ""}.` : "Profil non partagé — accès limité à l'encours."}</div>}
       </Carte>
       {estCandidat && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl p-4" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
@@ -960,7 +1026,7 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
         </div>
       )}
       {partage ? (<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Carte className="p-5"><div className="mb-1 text-sm font-semibold">{f.histo ? `Évolution du score (${f.histo.length} mois)` : "Trésorerie"}</div>
+        <Carte className="p-5"><div className="mb-1 text-sm font-semibold">{f.histo ? `Évolution du score (${f.histo.length} mois)` : "Trésorerie projetée sur 60 jours, à partir d'aujourd'hui"}</div>
           {f.histo ? (
             <div>
               <ResponsiveContainer width="100%" height={150}>
@@ -973,7 +1039,7 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
               <div className="mt-2 flex flex-wrap justify-between gap-x-3 text-[11px]" style={{ color: C.muted }}><span>Encaissé {court(f.bridge.encaisse)}</span><span>À recevoir {court(f.bridge.creances)}</span><span>Position {court(f.bridge.projete)}</span></div>
             </div>
           ) : (
-            <><div className="mb-3 text-[11px]" style={{ color: C.muted }}>{f.rupture ? `Rupture projetée le ${f.rupture.date.toLocaleDateString("fr-FR", { day: "2-digit", month: "long" })}` : "Pas de rupture projetée"}</div>
+            <><div className="mb-3 text-[11px]" style={{ color: C.muted }}>{f.rupture ? `Rupture projetée le ${dateLongueAn(f.rupture.date)}, ${relatif(f.rupture.d)}` : "Pas de rupture projetée sur 60 jours"}</div>
               <ResponsiveContainer width="100%" height={200}><AreaChart data={f.serie} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
                 <defs><linearGradient id="gf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={f.rupture ? C.rouge : C.teal} stopOpacity={0.25} /><stop offset="100%" stopColor={f.rupture ? C.rouge : C.teal} stopOpacity={0} /></linearGradient></defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: C.muted }} interval={11} axisLine={false} tickLine={false} /><YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={60} axisLine={false} tickLine={false} />
@@ -990,14 +1056,15 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
     </div>
   );
 }
-function ficheData(e) {
+function ficheData(e, aujourdhui = debutJour(new Date())) {
   const noms = [["Jours de trésorerie", 0.22], ["Régularité des encaissements", 0.20], ["Tendance du CA", 0.15], ["Poids des charges fixes", 0.15], ["Stabilité du solde", 0.14], ["Discipline de trésorerie", 0.14]];
   if (e.isFocus && e.profil) {
     const p = e.profil;
     return { bridge: { encaisse: p.encaisse, creances: p.creances, decaisse: p.decaisse, projete: p.projete }, histo: e.histo, signaux: e.signaux }; // signaux réels du dernier mois
   }
   const r = rng(1000 + e.id); const serie = []; let solde = e.ead * (0.12 + r() * 0.1); const net = e.score > 60 ? 1 : e.score > 50 ? 0.4 : -0.5;
-  for (let d = 0; d <= 60; d++) { const date = new Date(2026, 10, 15 + d); const choc = (d === 22 || d === 44) ? -e.ead * 0.11 : 0; solde += net * (e.ead * 0.004) * (0.6 + r() * 0.8) + choc; serie.push({ d, date, dateLabel: date.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }), solde }); }
+  for (let d = 0; d <= 60; d++) { const date = ajouterJoursA(aujourdhui, d); // projection à partir d'aujourd'hui
+    const choc = (d === 22 || d === 44) ? -e.ead * 0.11 : 0; solde += net * (e.ead * 0.004) * (0.6 + r() * 0.8) + choc; serie.push({ d, date, dateLabel: date.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }), solde }); }
   const rupture = serie.find((p) => p.d > 0 && p.solde < 0);
   const signaux = noms.map(([nom, poids]) => ({ nom, poids, score: Math.max(5, Math.min(98, e.score + Math.round((r() - 0.5) * 34))) }));
   return { serie, rupture, signaux };
@@ -1024,8 +1091,9 @@ const PRECISIONS = ["Baisse saisonnière (hivernage, Tabaski, Magal…)", "Un cl
 const libelleReponse = (type) => REPONSES.find((r) => r[0] === type)[1];
 const DELAI_RELANCE = 14; // jours : un même point n'est pas signalé deux fois dans cet intervalle
 const DELAI_REVERIF = 15; // jours : revérification des signaux après l'envoi
-const ECRAN_POINT = { "Ventes impayées": ["tresorerie", "Ma trésorerie"], "Encaissements non enregistrés": ["rapprochement", "Rapprochement"], "Poids des charges fixes": ["financement", "Mon financement"] };
+const ECRAN_POINT = { "Données à actualiser": ["import", "Import"], "Ventes impayées": ["tresorerie", "Ma trésorerie"], "Encaissements non enregistrés": ["rapprochement", "Rapprochement"], "Poids des charges fixes": ["financement", "Mon financement"] };
 const MODELES_DEFAUT = {
+  "Données à actualiser": { titre: "Merci d'actualiser vos données", texte: "Les dernières données que vous partagez avec nous datent du {valeur} : un fichier à jour nous permettra de vérifier votre situation actuelle.", actions: ["Importer dans VIGIE un fichier de gestion à jour", "Inclure les ventes et dépenses des dernières semaines"] },
   "Tension de trésorerie": { titre: "Une tension de trésorerie est possible", texte: "Au rythme actuel, votre solde pourrait passer sous zéro vers le {valeur}.", actions: ["Prendre rendez-vous avec votre conseiller", "Anticiper les paiements importants des prochaines semaines"] },
   "Jours de trésorerie": { titre: "Votre réserve de trésorerie s'amenuise", texte: "Votre trésorerie disponible couvre moins de jours de charges qu'auparavant ({valeur}).", actions: ["Reporter ou fractionner le prochain achat de stock", "Négocier un délai de paiement avec un fournisseur", "Mettre de côté une partie des encaissements de la semaine"] },
   "Régularité des encaissements": { titre: "Vos rentrées d'argent deviennent irrégulières", texte: "Vos encaissements arrivent par à-coups ces dernières semaines ({valeur}).", actions: ["Relancer les clients qui ont des factures en attente", "Proposer le paiement par Wave ou Orange Money", "Convenir d'un échéancier avec les gros clients"] },
@@ -1037,17 +1105,18 @@ const MODELES_DEFAUT = {
   "Encaissements non enregistrés": { titre: "Des encaissements manquent dans votre comptabilité", texte: "Votre rapprochement fait apparaître des encaissements non enregistrés : {valeur}.", actions: ["Enregistrer ces encaissements dans votre fichier", "Faire le rapprochement à chaque fin de mois"] },
 };
 const MSG_FCFA = formateurs("XOF"); // les messages sont rédigés en FCFA, la devise de la PME
-const dateLongue = (d) => d.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+const dateLongue = (d) => premier(d.toLocaleDateString("fr-FR", d.getFullYear() === new Date().getFullYear() ? { day: "numeric", month: "long" } : { day: "numeric", month: "long", year: "numeric" }));
 const dateHeure = (d) => d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const ajouterJours = (d, j) => new Date(d.getTime() + j * 864e5);
 const remplir = (texte, vars) => texte.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m));
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
 // ce que l'institution observe dans les données partagées : projection, signaux faibles, profil, rapprochement
-function pointsVigilance(e, f) {
+function pointsVigilance(e, f, aujourdhui) {
   const pts = [];
+  if (e.isFocus && e.joursDepuisDonnees > SEUILS_FRAICHEUR.aJour) pts.push({ cle: "Données à actualiser", valeur: `${dateLongue(e.donneesDu)}, il y a ${e.joursDepuisDonnees} jours`, grave: e.joursDepuisDonnees > SEUILS_FRAICHEUR.aActualiser });
   const tension = f.rupture ? f.rupture.date : e.dateTension; // projection du portefeuille, ou analyse du fichier de la PME
-  if (tension) pts.push({ cle: "Tension de trésorerie", valeur: dateLongue(tension), grave: true });
+  if (tension && ecartJours(tension, aujourdhui) >= 0) pts.push({ cle: "Tension de trésorerie", valeur: dateLongue(tension), grave: true }); // une date déjà passée n'est pas une prévision
   [...f.signaux].filter((s) => s.score < 65 && !s.neutre).sort((a, b) => a.score - b.score).forEach((s) => pts.push({ cle: s.nom, valeur: `indicateur à ${s.score}/100`, grave: s.score < 45 }));
   const p = e.profil;
   if (p && p.ventesTotal && p.creances / p.ventesTotal > 0.15) pts.push({ cle: "Ventes impayées", valeur: `${MSG_FCFA.montant(p.creances)}, soit ${pct(p.creances / p.ventesTotal)} des ventes du mois (${pluriel(p.nbCreances, "facture")})` });
@@ -1170,6 +1239,7 @@ function Redaction({ e, points, inst, modeles, onEnvoyer, onAnnuler }) {
 
 /* ---------- message tel que la PME le reçoit (aussi utilisé comme aperçu) ---------- */
 function CarteNotif({ n, apercu = false, onLire, onRepondre, onCocher, goVue }) {
+  const { aujourdhui } = useAujourdhui();
   const [ouvert, setOuvert] = useState(apercu);
   const [mode, setMode] = useState(null);
   const [texte, setTexte] = useState("");
@@ -1200,7 +1270,7 @@ function CarteNotif({ n, apercu = false, onLire, onRepondre, onCocher, goVue }) 
               <ul className="space-y-1.5">{n.actions.map((a, i) => (
                 <li key={i}><label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 accent-[#0F766E]" checked={a.fait} disabled={apercu} onChange={() => onCocher(n.id, i)} /><span style={{ color: a.fait ? C.muted : C.ink, textDecoration: a.fait ? "line-through" : "none" }}>{a.texte}</span></label></li>))}</ul></div>
           )}
-          {echeance && <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: nv.c }}><CalendarClock size={13} /> Réponse souhaitée avant le {dateLongue(echeance)}</div>}
+          {echeance && <div className="flex items-center gap-1.5 text-xs font-medium" style={{ color: nv.c }}><CalendarClock size={13} /> Réponse souhaitée avant le {dateLongue(echeance)} · {n.reponse ? "répondu" : ecartJours(echeance, aujourdhui) < 0 ? `délai dépassé (${relatif(ecartJours(echeance, aujourdhui))})` : relatif(ecartJours(echeance, aujourdhui))}</div>}
           {!apercu && liens.length > 0 && <div className="flex flex-wrap gap-3">{liens.map(([vue, lbl]) => <button key={vue} onClick={() => goVue(vue)} className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: C.teal }}>Voir « {lbl} » <ChevronRight size={13} /></button>)}</div>}
           {n.statut === "Résolue" && <div className="text-xs font-medium" style={{ color: C.vert }}>Point clos par {n.instNom}.</div>}
           {n.statut === "À escalader" && <div className="text-xs font-medium" style={{ color: C.ambre }}>Votre conseiller va vous recontacter.</div>}
@@ -1264,6 +1334,8 @@ function Suivi({ notifs, instNom, modeles, modelesPerso, setModele, resetModele,
   );
 }
 function LigneSuivi({ n, ouvert, onBasculer, onCloturer, onOpen }) {
+  const { aujourdhui } = useAujourdhui();
+  const reverif = ajouterJours(n.envoyeLe, DELAI_REVERIF), avantReverif = ecartJours(reverif, aujourdhui);
   const clos = n.statut === "Résolue" || n.statut === "À escalader";
   return (
     <div style={{ borderColor: C.hairline }}>
@@ -1283,7 +1355,7 @@ function LigneSuivi({ n, ouvert, onBasculer, onCloturer, onOpen }) {
             ) : <div className="rounded-lg p-3" style={{ background: C.canvas, color: C.muted }}>{n.simule ? "Démo : cet emprunteur n'a pas d'espace PME simulé, aucune réponse n'arrivera." : "En attente de la réponse de la PME."}</div>}
             <div><div className="mb-1 font-semibold" style={{ color: C.muted }}>Historique</div>
               <ol className="space-y-1">{n.historique.map((h, i) => <li key={i} className="flex flex-wrap gap-x-2"><span className="font-semibold" style={{ color: ETATS_NOTIF[h.statut].c }}>{h.statut}</span><span style={{ color: C.muted }}>{dateHeure(h.le)} · {h.par}</span></li>)}</ol></div>
-            <div className="flex items-center gap-1.5" style={{ color: C.muted }}><CalendarClock size={13} /> Revérification des signaux prévue le {dateLongue(ajouterJours(n.envoyeLe, DELAI_REVERIF))}</div>
+            <div className="flex items-center gap-1.5" style={{ color: C.muted }}><CalendarClock size={13} /> Revérification des signaux prévue le {dateLongue(reverif)} · <span className="font-semibold" style={{ color: avantReverif <= 0 ? C.ambre : C.muted }}>{avantReverif < 0 ? `à faire, en retard (${relatif(avantReverif)})` : avantReverif === 0 ? "à faire aujourd'hui" : relatif(avantReverif)}</span></div>
             <div className="flex flex-wrap gap-2 pt-1">
               <button onClick={() => onOpen(n.empId)} className="rounded-lg border px-3 py-1.5 font-semibold" style={{ borderColor: C.hairline }}>Ouvrir la fiche</button>
               {!clos && <>
