@@ -142,7 +142,7 @@ export function ApercuAnalyse() {
     <CadreApp titre={`Analyse mois par mois — ${a.entreprise}`} icone={Store}>
       <div className="rounded-xl p-3" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
         <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: C.rouge }}><ShieldAlert size={14} /> Alerte précoce : la situation se dégrade</div>
-        <p className="mt-1 text-xs leading-relaxed">{a.verdict} Au rythme actuel, la trésorerie serait épuisée dans environ {a.tension} jours.</p>
+        <p className="mt-1 text-xs leading-relaxed">{a.verdict} Au rythme actuel, la trésorerie serait épuisée vers le {a.tension}.</p>
       </div>
       <Carte className="p-4"><div className="flex items-baseline justify-between text-xs"><span className="font-semibold">Score mensuel</span><span style={{ color: C.muted }}>seuil d'alerte : 66</span></div><Courbe points={a.mois.map(([m, v]) => [m, v])} couleurs={a.mois.map(([, , e]) => COULEUR_ETAT[e])} seuil={66} /></Carte>
       <Carte className="overflow-x-auto p-3">

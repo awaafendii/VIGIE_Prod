@@ -14,7 +14,7 @@ const FONCTIONS = [
     icone: Activity, nom: "Analyse mois par mois", titre: "Voir venir la dégradation, mois après mois.",
     texte: "VIGIE lit n'importe quel fichier — feuilles ventes et dépenses, journal de caisse, une feuille par mois —, répertorie tous les mois et recalcule pour chacun la trésorerie, les six signaux et le score.",
     points: ["Le mois où la baisse commence, et les signaux en cause", "Le mois où l'alerte précoce se serait déclenchée", "Une estimation du délai avant tension de trésorerie"],
-    apercu: ApercuAnalyse, legende: "Fichier d'exemple Quincaillerie Ndar · janv.–juin 2026",
+    apercu: ApercuAnalyse, legende: "Fichier d'exemple Quincaillerie Ndar · juin–sept. 2026",
   },
   {
     icone: GitCompareArrows, nom: "Rapprochement", titre: "Retrouvez l'argent que votre comptabilité ignore.",

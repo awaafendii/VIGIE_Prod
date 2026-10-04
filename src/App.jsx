@@ -75,7 +75,7 @@ const AujourdhuiContext = createContext({ maintenant: new Date(), aujourdhui: de
 const useAujourdhui = () => useContext(AujourdhuiContext);
 const premier = (t) => t.replace(/^1 /, "1er "); // « 1er septembre »
 const dateLongueAn = (d) => premier(d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }));
-const dateCourte = (d) => d.toLocaleDateString("fr-FR", d.getFullYear() === new Date().getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "2-digit" });
+const dateCourte = (d) => premier(d.toLocaleDateString("fr-FR", d.getFullYear() === new Date().getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "2-digit" }));
 const cleMois = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 const C = { ink: "#0E1B2C", canvas: "#F5F6F4", vert: "#047857", teal: "#0F766E", ambre: "#B45309", or: "#A16207", rouge: "#B91C1C", rougeF: "#7F1D1D", muted: "#5B6472", hairline: "#E3E6E2" };
@@ -116,8 +116,22 @@ const EX_DEPENSES = [
   { Date: "2026-06-18", Fournisseur: null, Libellé: "Fournitures de bureau", Montant: 150000, Mode: "Espèces", Statut: "Payé", Clé: 46191.00021 },
   { Date: "2026-06-25", Fournisseur: null, Libellé: "Frais bancaires & taxes", Montant: 210000, Mode: "Prélèvement", Statut: "Payé", Clé: 46198.00022 },
 ];
-// rapprochement présent dans le fichier réel
+// suite simulée : juillet → septembre 2026, même clientèle et mêmes fournisseurs qu'en juin, montants proches
+const MOIS_SIMULES = 3;
+function prolongerExemple(lignes, { graine, variation, impaye }) {
+  const r = rng(graine), suite = [];
+  for (let k = 1; k <= MOIS_SIMULES; k++) lignes.forEach((l, i) => {
+    const [y, m, d] = l.Date.split("-").map(Number), mois = m + k, jour = Math.min(d, new Date(y, mois, 0).getDate());
+    const fixe = /loyer|salaire/i.test(l.Libellé || ""); // loyer et salaires : mêmes montants chaque mois
+    suite.push({ ...l, Date: `${y}-${String(mois).padStart(2, "0")}-${String(jour).padStart(2, "0")}`, Montant: fixe ? l.Montant : Math.round((l.Montant * (1 + (r() - 0.5) * 2 * variation)) / 5000) * 5000, Statut: r() < impaye ? "Impayé" : "Payé", Clé: `SIM-${String(mois).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}` });
+  });
+  return suite;
+}
+const EX_VENTES_4M = [...EX_VENTES, ...prolongerExemple(EX_VENTES, { graine: 70, variation: 0.1, impaye: 0.15 })];
+const EX_DEPENSES_4M = [...EX_DEPENSES, ...prolongerExemple(EX_DEPENSES, { graine: 62, variation: 0.06, impaye: 0.04 })];
+// rapprochement présent dans le fichier réel (juin 2026)
 const EX_RECON = {
+  mois: "2026-06",
   comptes: [
     { compte: "Banque (521)", canal: "Virement", comptable: 4585000, releve: 4615000 },
     { compte: "Orange Money (5211)", canal: "Orange Money", comptable: 4382500, releve: 4367500 },
@@ -257,7 +271,7 @@ export default function App() {
   }, []);
   const chargerExemple = useCallback((avecRapprochement) => {
     const feuille = (nom, lignes) => ({ nom, colonnes: Object.keys(lignes[0]), lignes: lignes.map((l, i) => ({ ...l, __ligne: i + 2 })) });
-    chargerSource({ fichier: avecRapprochement ? "NPM Multiservices — fichier complet" : "NPM Multiservices — export sans rapprochement", entreprise: "NPM Multiservices", feuilles: [feuille("Ventes", EX_VENTES), feuille("Dépenses", EX_DEPENSES)], recon: avecRapprochement ? EX_RECON : null });
+    chargerSource({ fichier: `NPM Multiservices — ${avecRapprochement ? "fichier complet" : "export sans rapprochement"} (juin réel, juillet → septembre simulés)`, entreprise: "NPM Multiservices", feuilles: [feuille("Ventes", EX_VENTES_4M), feuille("Dépenses", EX_DEPENSES_4M)], recon: avecRapprochement ? EX_RECON : null });
   }, [chargerSource]);
   const chargerFichier = useCallback(async (file, options = {}) => {
     try {
@@ -265,14 +279,14 @@ export default function App() {
       const feuilles = decalerDates(lu.feuilles, options.decalerMois || 0), nomsFeuilles = lu.nomsFeuilles;
       if (!feuilles.length) { setErreurImport(`Aucune feuille exploitable dans « ${file.name} » : VIGIE cherche une ligne d'en-tête contenant une colonne de date (Date, Jour, Date opération…).`); return; }
       const aRappro = nomsFeuilles.some((n) => /rappro|relev|lettr/i.test(n));
-      chargerSource({ fichier: options.decalerMois ? `${file.name} (dates recalées sur les 6 derniers mois)` : file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
+      chargerSource({ fichier: options.decalerMois ? `${file.name} (dates recalées sur les 4 derniers mois)` : file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
     } catch (e) { setErreurImport(`Lecture impossible de « ${file.name} » : fichier protégé, endommagé ou d'un format non pris en charge.`); }
   }, [chargerSource]);
   const chargerExempleMensuel = useCallback(async () => {
     const ex = EXEMPLES_FICHIERS[0];
     try {
       const rep = await fetch(ex.url); if (!rep.ok) throw new Error(rep.statusText);
-      const d = new Date(), decalerMois = d.getFullYear() * 12 + d.getMonth() - 1 - (2026 * 12 + 5); // le fichier s'arrête en juin 2026 : on le fait finir le mois dernier
+      const d = new Date(), decalerMois = Math.max(0, d.getFullYear() * 12 + d.getMonth() - 1 - (2026 * 12 + 8)); // le fichier finit en septembre 2026 ; plus tard, on le recale pour qu'il finisse le mois dernier
       await chargerFichier(new File([await rep.blob()], ex.fichier), { entreprise: "Quincaillerie Ndar", soldeInitial: 4500000, decalerMois });
     } catch (e) { setErreurImport("Impossible de charger le fichier d'exemple : vérifiez la connexion."); }
   }, [chargerFichier]);
@@ -423,8 +437,8 @@ function PromptImport({ goImport }) { return <Vide icone={UploadCloud} titre="Im
 const ETAPES = ["Dépôt", "Correspondance", "Validation", "Profil"];
 // fichiers d'exemple servis depuis public/exemples (générés par scripts/generer-exemples.mjs)
 const EXEMPLES_FICHIERS = [
-  { url: "/exemples/quincaillerie-ndar-6-mois.xlsx", fichier: "quincaillerie-ndar-6-mois.xlsx", libelle: "Excel · feuilles Ventes et Dépenses" },
-  { url: "/exemples/journal-caisse-6-mois.csv", fichier: "journal-caisse-6-mois.csv", libelle: "CSV · journal de caisse unique" },
+  { url: "/exemples/quincaillerie-ndar-juin-septembre-2026.xlsx", fichier: "quincaillerie-ndar-juin-septembre-2026.xlsx", libelle: "Excel · feuilles Ventes et Dépenses" },
+  { url: "/exemples/journal-caisse-juin-septembre-2026.csv", fichier: "journal-caisse-juin-septembre-2026.csv", libelle: "CSV · journal de caisse unique" },
 ];
 const ROLES_FEUILLE = [["ventes", "Ventes (entrées)"], ["depenses", "Dépenses (sorties)"], ["journal", "Journal (entrées et sorties)"], ["ignorer", "Ignorer cette feuille"]];
 const LIBELLES_CHAMPS = { date: "Date", montant: "Montant", entree: "Entrées (montant)", sortie: "Sorties (montant)", sens: "Type d'opération", canal: "Canal de paiement", statut: "Statut (payé / impayé)", tiers: "Client / fournisseur", libelle: "Libellé", ref: "Référence unique" };
@@ -450,7 +464,8 @@ function Import({ etape, setEtape, source, roles, setRoles, maps, setMaps, resul
 function Depot({ onFichier, onExemple, onExempleMensuel, erreur }) {
   const [drag, setDrag] = useState(false);
   const { aujourdhui } = useAujourdhui();
-  const finEx = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth() - 1, 1), debutEx = new Date(finEx.getFullYear(), finEx.getMonth() - 5, 1);
+  const finEx = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth() - 1, 1), debutEx = new Date(finEx.getFullYear(), finEx.getMonth() - 3, 1);
+  const finNpm = new Date(2026, 8, 1); // NPM : juin réel, juillet → septembre 2026 simulés
   const exemple = (onClick, Ic, couleur, titre, texte) => (
     <button onClick={onClick} className="flex items-center gap-3 rounded-xl border bg-white p-4 text-left hover:bg-[#FAFBFA]" style={{ borderColor: C.hairline }}>
       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg" style={{ background: "#F0F5F4" }}><Ic size={18} style={{ color: couleur }} /></div>
@@ -467,9 +482,9 @@ function Depot({ onFichier, onExemple, onExempleMensuel, erreur }) {
       {erreur && <div className="flex items-start gap-2 rounded-lg p-3 text-sm" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: C.rouge }}><AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erreur}</div>}
       <div className="flex items-center gap-3"><div className="h-px flex-1" style={{ background: C.hairline }} /><span className="text-xs" style={{ color: C.muted }}>ou essayez un exemple</span><div className="h-px flex-1" style={{ background: C.hairline }} /></div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {exemple(onExempleMensuel, Activity, C.rouge, "6 derniers mois, en dégradation", `Quincaillerie Ndar · ${libelleMois(cleMois(debutEx))} → ${libelleMois(cleMois(finEx))}`)}
-        {exemple(() => onExemple(true), FileSpreadsheet, C.teal, "Un mois, fichier complet", "NPM Multiservices · avec rapprochement")}
-        {exemple(() => onExemple(false), Table2, C.ambre, "Un mois, sans rapprochement", "NPM Multiservices · ventes + dépenses")}
+        {exemple(onExempleMensuel, Activity, C.rouge, "4 mois, en dégradation", `Quincaillerie Ndar · ${libelleMois(cleMois(debutEx < new Date(2026, 5, 1) ? new Date(2026, 5, 1) : debutEx))} → ${libelleMois(cleMois(finEx < finNpm ? finNpm : finEx))}`)}
+        {exemple(() => onExemple(true), FileSpreadsheet, C.teal, "4 mois, situation saine", "NPM Multiservices · avec rapprochement de juin")}
+        {exemple(() => onExemple(false), Table2, C.ambre, "4 mois, sans rapprochement", "NPM Multiservices · ventes + dépenses")}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs" style={{ color: C.muted }}>
         <span>Télécharger les fichiers d'exemple pour tester l'import :</span>
@@ -622,16 +637,24 @@ function ReperesTemps({ temps: t, diag }) {
   ];
   const jalons = [["Début du fichier", t.debutFichier, C.muted], t.debutEtat && [der.etat, t.debutEtat, couleurEtat], ["Dernière donnée", t.dateDonnees, C.ink], ["Aujourd'hui", t.aujourdhui, C.teal], t.dateTension && ["Tension prévue", t.dateTension, C.rouge]].filter(Boolean).sort((a, b) => a[1] - b[1]);
   const min = jalons[0][1], max = jalons[jalons.length - 1][1], pos = (d) => (max > min ? ((d - min) / (max - min)) * 100 : 50);
+  // étiquettes : au-dessus ou au-dessous de la frise, du côté le plus dégagé ; décalées d'un cran si deux dates sont trop proches
+  const dernier = { haut: -100, bas: -100 }, ECART = 14;
+  const places = jalons.map(([l, d, c]) => {
+    const x = pos(d), cote = x - dernier.haut >= x - dernier.bas ? "haut" : "bas", rang = x - dernier[cote] < ECART ? 1 : 0;
+    dernier[cote] = x;
+    return { l, d, c, x, cote, rang };
+  });
   return (
     <Carte className="p-5">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><CalendarDays size={16} style={{ color: C.teal }} /> Repères dans le temps</div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{tuiles.map(([l, v, sous, c]) => (
         <div key={l} className="rounded-lg p-3" style={{ background: C.canvas }}><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-0.5 text-sm font-semibold">{v}</div><div className="text-[11px] font-semibold" style={{ color: c }}>{sous}</div></div>))}</div>
-      <div className="relative mx-3 mb-11 mt-12 hidden h-1 rounded-full sm:block" style={{ background: "#CBD2CC" }} role="img" aria-label={"Frise : " + jalons.map(([l, d]) => `${l} ${dateLongueAn(d)}`).join(", ")}>
-        {jalons.map(([l, d, c], i) => { const x = pos(d), ancre = x < 10 ? "left-0" : x > 90 ? "right-0 text-right" : "left-1/2 -translate-x-1/2 text-center"; return (
+      <div className="relative mx-3 mb-20 mt-20 hidden h-1 rounded-full sm:block" style={{ background: "#CBD2CC" }} role="img" aria-label={"Frise : " + jalons.map(([l, d]) => `${l} ${dateLongueAn(d)}`).join(", ")}>
+        {places.map(({ l, d, c, x, cote, rang }) => { const ancre = x < 10 ? "left-0" : x > 90 ? "right-0 text-right" : "left-1/2 -translate-x-1/2 text-center"; const decalage = 22 + rang * 30; return (
           <div key={l} className="absolute" style={{ left: `${x}%`, top: -6 }}>
             <div className="-ml-2 h-4 w-4 rounded-full border-[3px] bg-white" style={{ borderColor: c }} />
-            <div className={"absolute whitespace-nowrap text-[10px] leading-tight " + ancre + (i % 2 ? " top-6" : " bottom-6")}><div className="font-semibold" style={{ color: c }}>{l}</div><div style={{ color: C.muted }}>{dateCourte(d)}</div></div>
+            {rang > 0 && <div className="absolute left-0 w-px" style={{ background: c, opacity: 0.5, height: 30, [cote === "haut" ? "bottom" : "top"]: 16 }} />}
+            <div className={"absolute whitespace-nowrap text-[10px] leading-tight " + ancre} style={{ [cote === "haut" ? "bottom" : "top"]: decalage }}><div className="font-semibold" style={{ color: c }}>{l}</div><div style={{ color: C.muted }}>{dateCourte(d)}</div></div>
           </div>); })}
       </div>
       {t.fraicheur !== "à jour" && (
@@ -650,7 +673,7 @@ function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
   const donnees = mois.map((m) => ({ mois: libelleMois(m.cle), encaisse: m.encaisse, decaisse: m.decaisse, score: m.score, etat: m.etat }));
   const titre = { "Alerte précoce": "Alerte précoce : la situation se dégrade", Vigilance: "Vigilance : des signaux faiblissent", Sain: "Situation saine" }[diag.niveau];
   const phrases = [
-    diag.pic ? `Le score est passé de ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)} à ${der.score} en ${libelleMois(der.cle, true)} (${diag.chute} points).`
+    diag.pic ? `Le score est passé de ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)} à ${der.score} en ${libelleMois(der.cle, true)} (${diag.chute} point${Math.abs(diag.chute) > 1 ? "s" : ""}).`
       : mois.length === 1 ? `Votre fichier couvre un seul mois (${libelleMois(der.cle, true)}) : la tendance apparaîtra dès qu'il contiendra au moins deux mois.` : `Score de ${der.score}/100 en ${libelleMois(der.cle, true)}, sans baisse en cours.`,
     t.premiereAlerte && `VIGIE aurait déclenché l'alerte précoce dès le ${dateLongueAn(t.premiereAlerte)} (données de ${libelleMois(diag.premiereAlerte.cle, true)}), ${relatif(-ecartJours(t.aujourdhui, t.premiereAlerte))}.`,
     t.dateTension && (t.joursAvantTension >= 0 ? `Au rythme des deux derniers mois, la trésorerie disponible serait épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)}.` : `Au rythme des deux derniers mois, la trésorerie disponible aurait été épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)} : sans données plus récentes, la situation actuelle est à vérifier en priorité.`),
@@ -764,7 +787,7 @@ function Rapprochement({ hasReleve, recon, releveAjoute, onAjouter }) {
       <div className="space-y-5">
         <EnTeteRappro />
         <Carte>
-          <div className="border-b px-5 py-3 text-sm font-semibold" style={{ borderColor: C.hairline }}>Solde comptable vs relevé bancaire</div>
+          <div className="border-b px-5 py-3 text-sm font-semibold" style={{ borderColor: C.hairline }}>Solde comptable vs relevé bancaire{recon.mois && <span className="font-normal" style={{ color: C.muted }}> · {libelleMois(recon.mois, true)}, présent dans le fichier</span>}</div>
           <div className="divide-y" style={{ borderColor: C.hairline }}>
             {recon.comptes.map((c, i) => { const ecart = c.releve - c.comptable; return (
               <div key={i} className="grid grid-cols-2 items-center gap-2 px-5 py-3 text-sm sm:grid-cols-4">

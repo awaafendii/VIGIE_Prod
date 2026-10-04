@@ -42,13 +42,13 @@ export const PORTEFEUILLE = {
   ],
 };
 
-// analyse du fichier d'exemple « Quincaillerie Ndar » (public/exemples), calculée par src/analyse.js
+// analyse du fichier d'exemple « Quincaillerie Ndar », juin → septembre 2026 (public/exemples), calculée par src/analyse.js
 export const ANALYSE = {
   entreprise: "Quincaillerie Ndar",
-  mois: [["janv.", 78, "Sain"], ["févr.", 87, "Sain"], ["mars", 86, "Sain"], ["avr.", 66, "Vigilance"], ["mai", 56, "Alerte précoce"], ["juin", 47, "Alerte précoce"]],
-  signaux: [["Jours de tréso.", [76, 81, 88, 76, 68, 45]], ["Encaissements", [84, 92, 79, 71, 52, 54]], ["Tendance CA", [null, 84, 83, 48, 32, 24]], ["Charges fixes", [66, 69, 70, 63, 57, 48]], ["Stabilité", [null, 97, 97, 75, 75, 91]], ["Discipline", [100, 100, 100, 60, 52, 18]]],
-  verdict: "Le score est passé de 87 en février à 47 en juin (−40 points). VIGIE aurait déclenché l'alerte précoce dès mai.",
-  tension: 35,
+  mois: [["juin", 78, "Sain"], ["juil.", 88, "Sain"], ["août", 73, "Sain"], ["sept.", 53, "Alerte précoce"]],
+  signaux: [["Jours de tréso.", [75, 84, 77, 51]], ["Encaissements", [84, 92, 62, 74]], ["Tendance CA", [null, 92, 63, 26]], ["Charges fixes", [66, 70, 67, 54]], ["Stabilité", [null, 95, 75, 60]], ["Discipline", [100, 100, 100, 50]]],
+  verdict: "Le score est passé de 88 en juillet à 53 en septembre (−35 points). VIGIE a déclenché l'alerte précoce le 1er octobre 2026, sur les données de septembre.",
+  tension: "17 novembre 2026",
 };
 
 // pondération et définition des six signaux (identiques à src/analyse.js)

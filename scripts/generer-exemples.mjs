@@ -1,9 +1,9 @@
 /* ============================================================
    Génère les fichiers d'exemple de public/exemples/ :
-   « Quincaillerie Ndar », entreprise fictive, janvier → juin 2026,
-   dont la situation se dégrade à partir d'avril.
-   • quincaillerie-ndar-6-mois.xlsx : feuilles Ventes et Dépenses
-   • journal-caisse-6-mois.csv : journal de caisse unique (séparateur « ; »,
+   « Quincaillerie Ndar », entreprise fictive, juin → septembre 2026 :
+   un été sain, puis une dégradation en août et septembre.
+   • quincaillerie-ndar-juin-septembre-2026.xlsx : feuilles Ventes et Dépenses
+   • journal-caisse-juin-septembre-2026.csv : journal de caisse unique (séparateur « ; »,
      dates jj/mm/aaaa, colonnes Entrée / Sortie, report à nouveau en tête)
    Les deux fichiers contiennent les mêmes opérations.
    Usage : node scripts/generer-exemples.mjs
@@ -22,13 +22,12 @@ const CLIENTS = ["Chantier Ouakam — M. Ndiaye", "Entreprise Sall BTP", "GIE B�
 const CANAUX = ["Espèces", "Espèces", "Wave", "Wave", "Orange Money", "Virement"];
 // par mois : ventes visées, part impayée, poids de la fin de mois, achats de stock, fournisseurs restés impayés
 const MOIS = [
-  { m: 1, ventes: 8400000, impaye: 0.05, finMois: 0.25, achats: 5000000, fournisseursImpayes: [] },
-  { m: 2, ventes: 8300000, impaye: 0.06, finMois: 0.25, achats: 4900000, fournisseursImpayes: [] },
-  { m: 3, ventes: 8700000, impaye: 0.06, finMois: 0.27, achats: 5200000, fournisseursImpayes: [] },
-  { m: 4, ventes: 7400000, impaye: 0.15, finMois: 0.4, achats: 5800000, fournisseursImpayes: [2] },
-  { m: 5, ventes: 6000000, impaye: 0.26, finMois: 0.5, achats: 5600000, fournisseursImpayes: [1] },
-  { m: 6, ventes: 4800000, impaye: 0.35, finMois: 0.55, achats: 5000000, fournisseursImpayes: [0] },
+  { m: 6, ventes: 8400000, impaye: 0.05, finMois: 0.25, achats: 5000000, fournisseursImpayes: [] },
+  { m: 7, ventes: 8700000, impaye: 0.06, finMois: 0.25, achats: 5100000, fournisseursImpayes: [] },
+  { m: 8, ventes: 7800000, impaye: 0.1, finMois: 0.33, achats: 5900000, fournisseursImpayes: [] },
+  { m: 9, ventes: 6000000, impaye: 0.24, finMois: 0.48, achats: 5600000, fournisseursImpayes: [2] },
 ];
+const DERNIER = MOIS[MOIS.length - 1].m;
 const date = (m, j) => new Date(Date.UTC(2026, m - 1, j));
 const ventes = [], depenses = [];
 let nv = 0, nd = 0;
@@ -48,7 +47,7 @@ for (const p of MOIS) {
     depenses.push({ Date: date(p.m, [3, 10, 17][i]), Fournisseur: f, Libellé: "Achat de marchandises", Montant: montant, Mode: "Virement", Statut: p.fournisseursImpayes.includes(i) ? "Impayé" : "Payé", "N° pièce": `AC-${String(++nd).padStart(3, "0")}` });
   });
   const fixe = [["Bailleur", "Loyer du magasin", 350000, 2, "Virement"], ["Personnel", "Salaires du personnel", 700000, 28, "Virement"], ["Senelec", "Électricité", 95000 + Math.round(alea() * 25) * 1000, 12, "Wave"], ["SEN'EAU", "Eau", 30000, 12, "Wave"], ["Orange Sénégal", "Téléphone & Internet", 40000, 15, "Orange Money"], ["Transports Seck", "Livraisons chantiers", arrondi(120000 + alea() * 100000, 5000), 20, "Espèces"]];
-  for (const [f, lib, montant, jour, mode] of fixe) depenses.push({ Date: date(p.m, jour), Fournisseur: f, Libellé: lib, Montant: montant, Mode: mode, Statut: p.m === 6 && lib.startsWith("Loyer") ? "Impayé" : "Payé", "N° pièce": `AC-${String(++nd).padStart(3, "0")}` });
+  for (const [f, lib, montant, jour, mode] of fixe) depenses.push({ Date: date(p.m, jour), Fournisseur: f, Libellé: lib, Montant: montant, Mode: mode, Statut: p.m === DERNIER && lib.startsWith("Loyer") ? "Impayé" : "Payé", "N° pièce": `AC-${String(++nd).padStart(3, "0")}` });
 }
 const parDate = (a, b) => a.Date - b.Date;
 ventes.sort(parDate); depenses.sort(parDate);
@@ -61,7 +60,7 @@ for (const [nom, lignes] of [["Ventes", ventes], ["Dépenses", depenses]]) {
   XLSX.utils.book_append_sheet(wb, ws, nom);
 }
 mkdirSync("public/exemples", { recursive: true });
-writeFileSync("public/exemples/quincaillerie-ndar-6-mois.xlsx", XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+writeFileSync("public/exemples/quincaillerie-ndar-juin-septembre-2026.xlsx", XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 
 // ---------- CSV : journal de caisse unique ----------
 const jjmmaaaa = (d) => `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
@@ -70,8 +69,8 @@ const journal = [
   ...ventes.map((v) => ({ d: v.Date, lib: `Vente — ${v.Produit}`, tiers: v.Client, mode: v.Mode, entree: v.Montant, sortie: "", statut: v.Statut, piece: v["N° pièce"] })),
   ...depenses.map((v) => ({ d: v.Date, lib: v.Libellé, tiers: v.Fournisseur, mode: v.Mode, entree: "", sortie: v.Montant, statut: v.Statut, piece: v["N° pièce"] })),
 ].sort((a, b) => a.d - b.d || a.piece.localeCompare(b.piece));
-const lignes = ["Journal de caisse — Quincaillerie Ndar", "", "Date;Libellé;Tiers;Mode de paiement;Entrée;Sortie;Statut;N° pièce", `01/01/2026;Report à nouveau;;;${milliers(SOLDE_INITIAL)};;;`,
+const lignes = ["Journal de caisse — Quincaillerie Ndar", "", "Date;Libellé;Tiers;Mode de paiement;Entrée;Sortie;Statut;N° pièce", `01/06/2026;Report à nouveau;;;${milliers(SOLDE_INITIAL)};;;`,
   ...journal.map((o) => [jjmmaaaa(o.d), o.lib, o.tiers, o.mode, o.entree === "" ? "" : milliers(o.entree), o.sortie === "" ? "" : milliers(o.sortie), o.statut, o.piece].join(";"))];
-writeFileSync("public/exemples/journal-caisse-6-mois.csv", "﻿" + lignes.join("\r\n") + "\r\n");
+writeFileSync("public/exemples/journal-caisse-juin-septembre-2026.csv", "﻿" + lignes.join("\r\n") + "\r\n");
 
 console.log(`${ventes.length} ventes, ${depenses.length} dépenses → public/exemples/`);
