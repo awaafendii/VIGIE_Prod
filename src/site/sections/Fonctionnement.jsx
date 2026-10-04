@@ -4,10 +4,10 @@ import { ApercuCorrespondance } from "../components/Apercus.jsx";
 
 // les quatre étapes de l'import, dans l'ordre de l'application
 const ETAPES = [
-  { titre: "Dépôt", texte: "Glissez votre fichier .xlsx, .xlsm ou .csv. VIGIE repère les feuilles ventes et dépenses, et la ligne d'en-tête." },
-  { titre: "Correspondance", texte: "Date, montant, canal, statut, contrepartie, libellé, référence : chaque champ est relié automatiquement à une colonne. Vous corrigez si besoin, quel que soit votre format." },
-  { titre: "Validation", texte: "Les dates invalides, les montants nuls et les doublons sont écartés et comptés. Vous savez exactement ce qui a été retenu." },
-  { titre: "Profil", texte: "Encaissé, à recevoir, décaissé, à payer : l'argent réellement entré est séparé de ce qui reste dû." },
+  { titre: "Dépôt", texte: "Glissez votre fichier Excel ou CSV : feuilles ventes et dépenses, journal de caisse ou une feuille par mois. VIGIE reconnaît seul la structure et la ligne d'en-tête." },
+  { titre: "Correspondance", texte: "Date, montant ou entrées / sorties, canal, statut, contrepartie : chaque champ est relié automatiquement à une colonne. Vous corrigez si besoin et voyez aussitôt comment les premières lignes sont lues." },
+  { titre: "Validation", texte: "Dates ou montants illisibles, lignes de total, doublons : chaque ligne écartée l'est avec sa raison. Les mois du fichier sont répertoriés et le solde de départ détecté." },
+  { titre: "Profil et analyse", texte: "Chaque mois est analysé : trésorerie, six signaux, score — jusqu'au mois où l'alerte précoce se déclenche." },
 ];
 
 export default function Fonctionnement() {
@@ -15,7 +15,7 @@ export default function Fonctionnement() {
     <Section id="fonctionnement">
       <div className="grid items-start gap-12 lg:grid-cols-2">
         <div>
-          <EnTete surtitre="Fonctionnement" titre="De votre fichier Excel à un profil fiable, en quatre étapes." texte="Pas de saisie à refaire, pas de logiciel à installer. VIGIE part du fichier que la PME tient déjà." />
+          <EnTete surtitre="Fonctionnement" titre="De n'importe quel fichier à une analyse mois par mois." texte="Pas de saisie à refaire, pas de logiciel à installer. VIGIE part du fichier que la PME tient déjà." />
           <ol className="mt-10 space-y-0">
             {ETAPES.map((e, i) => (
               <Reveal as="li" key={e.titre} delai={i * 80} className="relative flex gap-4 pb-8 last:pb-0">

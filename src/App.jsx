@@ -1,15 +1,15 @@
 import React, { useState, useMemo, useCallback, createContext, useContext } from "react";
-import * as XLSX from "xlsx";
+import { lireClasseur, rolesAuto, autoMap, CHAMPS_ROLE, manquants, extraireFeuille, analyserMois, diagnostiquer, libelleMois, finDuMois, nomDepuisFichier, parseMontant, SEUIL_ALERTE, CHUTE_ALERTE, CHUTE_PIC } from "./analyse.js";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, Cell,
+  ResponsiveContainer, ReferenceLine, Cell, ComposedChart, Line,
 } from "recharts";
 import {
   UploadCloud, FileSpreadsheet, ArrowRight, ArrowLeft, CheckCircle2, XCircle,
   AlertTriangle, Wallet, TrendingUp, TrendingDown, Link2, Info, Table2, ShieldCheck,
   RefreshCw, ChevronRight, Landmark, Store, Smartphone, Banknote, CircleDollarSign,
   ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban, Coins,
-  Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X,
+  Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X, Activity, Download,
 } from "lucide-react";
 
 /* ============================================================
@@ -17,6 +17,8 @@ import {
    Une seule application :
      • Espace PME : Import → Trésorerie → Rapprochement → Financement
      • Espace Institution (VIGIE) : risque de portefeuille
+   • Analyse mois par mois de n'importe quel fichier (src/analyse.js) :
+     dégradation des signaux jusqu'à l'alerte précoce
    • Recommandations : l'institution transforme l'alerte précoce en
      conseils envoyés à la PME, qui répond depuis son espace
    Le profil issu de l'import alimente VIGIE (consentement).
@@ -30,7 +32,6 @@ import {
 const rng = (seed) => () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const abreger = (n) => { const a = Math.abs(n), s = n < 0 ? "-" : ""; if (a >= 1e9) return s + (a / 1e9).toFixed(a >= 1e10 ? 0 : 1).replace(".", ",") + " Md"; if (a >= 1e6) return s + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(".", ",") + " M"; if (a >= 1e3) return s + (a / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(".", ",") + " k"; return s + Math.round(a); };
 const pct = (x, d = 0) => (x * 100).toFixed(d).replace(".", ",") + " %";
-const toISO = (v) => { if (v == null || v === "") return null; if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10); const d = new Date(v); return isNaN(d) ? null : d.toISOString().slice(0, 10); };
 
 /* ---------- devises d'affichage ----------
    Les données restent en FCFA ; seul l'affichage est converti.
@@ -73,8 +74,6 @@ const useMontants = () => useContext(DeviseContext);
 const C = { ink: "#0E1B2C", canvas: "#F5F6F4", vert: "#047857", teal: "#0F766E", ambre: "#B45309", or: "#A16207", rouge: "#B91C1C", rougeF: "#7F1D1D", muted: "#5B6472", hairline: "#E3E6E2" };
 const STATUTS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Arriérés: { c: C.or, bg: "#FEFCE8", bd: "#FDE68A" }, PAR30: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, PAR90: { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" }, Douteux: { c: C.rougeF, bg: "#FEF2F2", bd: "#FCA5A5" } };
 const CANAUX = { "Virement": { c: "#0E1B2C", icone: Landmark }, "Espèces": { c: C.or, icone: Banknote }, "Orange Money": { c: "#F16E00", icone: Smartphone }, "Wave": { c: "#1DC8FF", icone: Smartphone }, "Prélèvement": { c: C.teal, icone: RefreshCw }, "Autre": { c: C.muted, icone: CircleDollarSign } };
-const normCanal = (v) => { const s = String(v || "").trim().toLowerCase(); if (s.includes("virement")) return "Virement"; if (s.includes("espèce") || s.includes("espece") || s.includes("cash")) return "Espèces"; if (s.includes("orange")) return "Orange Money"; if (s.includes("wave")) return "Wave"; if (s.includes("prélèv") || s.includes("prelev")) return "Prélèvement"; return "Autre"; };
-const normStatut = (v) => { const s = String(v || "").trim().toLowerCase(); return s.startsWith("pay") ? "Payé" : s.startsWith("impay") ? "Impayé" : "Inconnu"; };
 const INSTITUTIONS = [{ id: "cayor", nom: "Cayor Crédit", conseiller: "Fatou Sarr" }, { id: "jappoo", nom: "Jappoo Microfinance", conseiller: "Ibrahima Ba" }, { id: "ndiambour", nom: "Ndiambour Capital", conseiller: "Mariama Cissé" }];
 const SEEDS = { cayor: 20261121, jappoo: 55012, ndiambour: 88133 };
 
@@ -123,61 +122,10 @@ const EX_RECON = {
   ],
 };
 
-/* ---------- import : mapping, lecture, validation ---------- */
-const SYN = { date: ["date"], montant: ["montant", "ttc"], canal: ["mode", "moyen", "canal", "paiement"], statut: ["statut", "état", "etat"], tiers: ["client", "fournisseur", "tiers"], libelle: ["libellé", "libelle", "produit", "désignation"], ref: ["clé", "cle", "référence", "reference", "ref", "pièce", "piece"] };
-function autoMap(cols) { const m = {}; for (const [k, ss] of Object.entries(SYN)) m[k] = cols.find((c) => ss.some((s) => String(c).trim().toLowerCase() === s)) || cols.find((c) => ss.some((s) => String(c).trim().toLowerCase().includes(s))) || ""; return m; }
-function lireFeuille(ws) {
-  const g = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: null, blankrows: false });
-  let h = -1; for (let i = 0; i < Math.min(g.length, 20); i++) if ((g[i] || []).some((c) => String(c).trim().toLowerCase() === "date")) { h = i; break; }
-  if (h < 0) return null;
-  const ent = g[h].map((c) => (c == null ? "" : String(c).trim()));
-  const di = ent.findIndex((e) => e.toLowerCase() === "date"); const lignes = [];
-  for (let i = h + 1; i < g.length; i++) { const row = g[i] || []; if (row[di] == null || row[di] === "") continue; const o = {}; ent.forEach((e, j) => { if (e) o[e] = row[j]; }); lignes.push(o); }
-  return { colonnes: ent.filter(Boolean), lignes };
-}
-function valider(lignes, m, sens) {
-  const vus = new Set(); const valides = [], rejets = [];
-  for (const l of lignes) {
-    const date = toISO(l[m.date]); const montant = Number(String(l[m.montant]).replace(/\s/g, "").replace(",", "."));
-    const ref = l[m.ref] != null ? String(l[m.ref]) : `${date}-${montant}`;
-    if (!date) { rejets.push({ l, raison: "date invalide" }); continue; }
-    if (!isFinite(montant) || montant <= 0) { rejets.push({ l, raison: "montant invalide" }); continue; }
-    if (vus.has(ref)) { rejets.push({ l, raison: "doublon" }); continue; } vus.add(ref);
-    valides.push({ sens, date, montant, ref, canal: normCanal(l[m.canal]), statut: normStatut(l[m.statut]), tiers: l[m.tiers] || "—", libelle: l[m.libelle] || "" });
-  }
-  return { valides, rejets };
-}
-function calculerProfil(E, S) {
-  const s = (a, f) => a.filter(f).reduce((x, y) => x + y.montant, 0);
-  const encaisse = s(E, (e) => e.statut === "Payé"), creances = s(E, (e) => e.statut === "Impayé");
-  const decaisse = s(S, (e) => e.statut === "Payé"), dettes = s(S, (e) => e.statut === "Impayé");
-  const ventesTotal = encaisse + creances;
-  const parCanal = {}; E.filter((e) => e.statut === "Payé").forEach((e) => parCanal[e.canal] = (parCanal[e.canal] || 0) + e.montant);
-  const canaux = Object.entries(parCanal).map(([canal, montant]) => ({ canal, montant, part: montant / (encaisse || 1) })).sort((a, b) => b.montant - a.montant);
-  const chargesFixes = s(S, (e) => /loyer|salaire/i.test(e.libelle));
-  const taux = ventesTotal ? encaisse / ventesTotal : 0;
-  const marge = ventesTotal ? (ventesTotal - (decaisse + dettes)) / ventesTotal : 0;
-  const poidsFixe = ventesTotal ? chargesFixes / ventesTotal : 0;
-  return { encaisse, creances, decaisse, dettes, ventesTotal, realise: encaisse - decaisse, projete: encaisse - decaisse + creances - dettes, canaux, taux, marge, poidsFixe, nbCreances: E.filter((e) => e.statut === "Impayé").length };
-}
-// score de bancabilité dérivé de la santé du mois (pour VIGIE)
-function scoreDepuisProfil(p) {
-  const clamp = (x) => Math.max(0, Math.min(100, x));
-  return Math.round(clamp(0.35 * (p.taux * 100) + 0.40 * Math.min(100, p.marge * 200) + 0.25 * (100 - Math.min(100, p.poidsFixe * 250))));
-}
-// historique sur 4 mois : juin = données réelles ; mois précédents = reconstruits (même structure)
-function genererHistorique(pJuin) {
-  const specs = [
-    { mois: "Mars", taux: 0.68, marge: 0.34, poidsFixe: 0.14, f: 0.84 },
-    { mois: "Avril", taux: 0.60, marge: 0.24, poidsFixe: 0.17, f: 0.74 },
-    { mois: "Mai", taux: 0.73, marge: 0.38, poidsFixe: 0.13, f: 0.93 },
-    { mois: "Juin", taux: pJuin.taux, marge: pJuin.marge, poidsFixe: pJuin.poidsFixe, reel: true },
-  ];
-  return specs.map((m) => ({ mois: m.mois, score: scoreDepuisProfil(m), ventes: m.reel ? pJuin.ventesTotal : Math.round(pJuin.ventesTotal * m.f), reel: !!m.reel }));
-}
+/* ---------- lecture, extraction, profil et analyse mensuelle : voir src/analyse.js ---------- */
 
 /* ---------- rapprochement Branch B : relevé ajouté ---------- */
-function genererReleveExemple(E) {
+function genererReleveExemple(E, cle) {
   // relevé bancaire/mobile d'exemple, dérivé des ventes encaissées (hors espèces) + anomalies réalistes
   const bancaires = E.filter((e) => e.statut === "Payé" && e.canal !== "Espèces");
   const releve = [];
@@ -187,8 +135,8 @@ function genererReleveExemple(E) {
     releve.push({ date: e.date, montant: e.montant - frais, canal: e.canal, libelle: e.tiers, frais });
   });
   // 2 crédits présents au relevé mais jamais comptabilisés (revenus non enregistrés)
-  releve.push({ date: "2026-06-08", montant: 420000, canal: "Orange Money", libelle: "Encaissement non identifié", frais: 0 });
-  releve.push({ date: "2026-06-19", montant: 265000, canal: "Virement", libelle: "Virement reçu non rapproché", frais: 0 });
+  releve.push({ date: `${cle}-08`, montant: 420000, canal: "Orange Money", libelle: "Encaissement non identifié", frais: 0 });
+  releve.push({ date: `${cle}-19`, montant: 265000, canal: "Virement", libelle: "Virement reçu non rapproché", frais: 0 });
   return releve;
 }
 function rapprocher(E, releve) {
@@ -235,13 +183,13 @@ function genererPortefeuille(seed) {
   }
   return arr;
 }
-// la PME importée, construite en emprunteur-vedette (candidate puis validée par une institution)
-function construireVedette(profil, nomFocus, releve) {
-  const histo = genererHistorique(profil);
-  const sc = histo[histo.length - 1].score;
-  const scoreDelta = sc - histo[histo.length - 2].score;
+// la PME importée, construite en emprunteur-vedette à partir de l'analyse mensuelle de son fichier
+function construireVedette({ mois, diag }, nomFocus, releve) {
+  const der = diag.dernier, sc = der.score;
   const pd = Math.max(0.02, Math.min(0.6, 0.02 + (100 - sc) / 100 * 0.42));
-  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta, dpd: 0, statut: "Sain", alertePrecoce: false, joursAvantStress: null, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil, histo, rappro: releve ? { nonEnregistre: releve.montantNonEnreg, nb: releve.releveOrphelins.length } : null };
+  const alerte = der.etat === "Alerte précoce";
+  const dateTension = diag.joursAvantTension != null ? new Date(finDuMois(der.cle).getTime() + diag.joursAvantTension * 864e5) : null;
+  return { id: 0, isFocus: true, nom: nomFocus, secteur: "Commerce & distribution", region: "Dakar", ead: 2800000, taux: 0.14, anciennete: 19, score: sc, scoreDelta: der.delta ?? 0, dpd: 0, statut: "Sain", alertePrecoce: alerte, joursAvantStress: alerte ? diag.joursAvantTension : null, dateTension, pd, lgd: 0.45, ecl: 2800000 * pd * 0.45, profil: der.profil, signaux: der.signaux, histo: mois.map((m) => ({ mois: libelleMois(m.cle), score: m.score })), rappro: releve ? { nonEnregistre: releve.montantNonEnreg, nb: releve.releveOrphelins.length } : null };
 }
 function agreger(pf) {
   const enc = pf.reduce((a, e) => a + e.ead, 0); const exp = (f) => pf.filter(f).reduce((a, e) => a + e.ead, 0);
@@ -275,7 +223,10 @@ export default function App() {
   const [valides, setValides] = useState({});
   const [rejetes, setRejetes] = useState({});
   const [source, setSource] = useState(null);
-  const [mapV, setMapV] = useState(null); const [mapD, setMapD] = useState(null);
+  const [roles, setRoles] = useState({}); // rôle de chaque feuille : ventes, dépenses, journal ou ignorer
+  const [maps, setMaps] = useState({}); // correspondance des colonnes, par feuille
+  const [soldeSaisi, setSoldeSaisi] = useState(null); // trésorerie de départ saisie (sinon : détectée ou zéro)
+  const [erreurImport, setErreurImport] = useState(null);
   const [impEtape, setImpEtape] = useState(0);
   const [releveAjoute, setReleveAjoute] = useState(null);
   const [devise, setDevise] = useState("XOF");
@@ -283,39 +234,52 @@ export default function App() {
   const [notifs, setNotifs] = useState([]); // recommandations envoyées, la plus récente en premier
   const [modeles, setModeles] = useState({}); // modèles modifiés, par institution
 
+  const chargerSource = useCallback((src, solde = null) => {
+    const r = rolesAuto(src.feuilles);
+    setSource(src); setRoles(r); setMaps(Object.fromEntries(src.feuilles.map((f) => [f.nom, autoMap(f.colonnes, r[f.nom])])));
+    setSoldeSaisi(solde); setErreurImport(null); setReleveAjoute(null); setImpEtape(1);
+  }, []);
   const chargerExemple = useCallback((avecRapprochement) => {
-    const ventes = { colonnes: Object.keys(EX_VENTES[0]), lignes: EX_VENTES };
-    const depenses = { colonnes: Object.keys(EX_DEPENSES[0]), lignes: EX_DEPENSES };
-    setSource({ nom: avecRapprochement ? "NPM Multiservices — fichier complet" : "NPM Multiservices — export sans rapprochement", ventes, depenses, recon: avecRapprochement ? EX_RECON : null });
-    setMapV(autoMap(ventes.colonnes)); setMapD(autoMap(depenses.colonnes));
-    setReleveAjoute(null); setImpEtape(1);
-  }, []);
-  const chargerFichier = useCallback(async (file) => {
+    const feuille = (nom, lignes) => ({ nom, colonnes: Object.keys(lignes[0]), lignes: lignes.map((l, i) => ({ ...l, __ligne: i + 2 })) });
+    chargerSource({ fichier: avecRapprochement ? "NPM Multiservices — fichier complet" : "NPM Multiservices — export sans rapprochement", entreprise: "NPM Multiservices", feuilles: [feuille("Ventes", EX_VENTES), feuille("Dépenses", EX_DEPENSES)], recon: avecRapprochement ? EX_RECON : null });
+  }, [chargerSource]);
+  const chargerFichier = useCallback(async (file, options = {}) => {
     try {
-      const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
-      const findSheet = (kw) => { for (const k of kw) { const n = wb.SheetNames.find((s) => s.toLowerCase().includes(k)); if (n) return wb.Sheets[n]; } return null; };
-      let ventes = null; const vs = findSheet(["vente", "encaiss"]); if (vs) ventes = lireFeuille(vs);
-      if (!ventes) for (const s of wb.SheetNames) { const f = lireFeuille(wb.Sheets[s]); if (f) { ventes = f; break; } }
-      if (!ventes) return;
-      const ds = findSheet(["dépense", "depense", "achat", "charge"]); const depenses = ds ? lireFeuille(ds) : { colonnes: ventes.colonnes, lignes: [] };
-      const aRappro = wb.SheetNames.some((s) => /rappro|relev|lettr/i.test(s));
-      setSource({ nom: file.name, ventes, depenses, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null });
-      setMapV(autoMap(ventes.colonnes)); setMapD(autoMap(depenses.colonnes)); setReleveAjoute(null); setImpEtape(1);
-    } catch (e) { /* ignoré */ }
-  }, []);
+      const { feuilles, nomsFeuilles } = lireClasseur(await file.arrayBuffer(), file.name);
+      if (!feuilles.length) { setErreurImport(`Aucune feuille exploitable dans « ${file.name} » : VIGIE cherche une ligne d'en-tête contenant une colonne de date (Date, Jour, Date opération…).`); return; }
+      const aRappro = nomsFeuilles.some((n) => /rappro|relev|lettr/i.test(n));
+      chargerSource({ fichier: file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
+    } catch (e) { setErreurImport(`Lecture impossible de « ${file.name} » : fichier protégé, endommagé ou d'un format non pris en charge.`); }
+  }, [chargerSource]);
+  const chargerExempleMensuel = useCallback(async () => {
+    const ex = EXEMPLES_FICHIERS[0];
+    try {
+      const rep = await fetch(ex.url); if (!rep.ok) throw new Error(rep.statusText);
+      await chargerFichier(new File([await rep.blob()], ex.fichier), { entreprise: "Quincaillerie Ndar", soldeInitial: 4500000 });
+    } catch (e) { setErreurImport("Impossible de charger le fichier d'exemple : vérifiez la connexion."); }
+  }, [chargerFichier]);
 
+  // lecture de toutes les feuilles retenues, puis analyse mois par mois
   const resultat = useMemo(() => {
-    if (!source || !mapV) return null;
-    const v = valider(source.ventes.lignes, mapV, "ENTREE");
-    const d = source.depenses.lignes.length && mapD ? valider(source.depenses.lignes, mapD, "SORTIE") : { valides: [], rejets: [] };
-    return { entrees: v.valides, sorties: d.valides, rejets: [...v.rejets, ...d.rejets], profil: calculerProfil(v.valides, d.valides), nbValides: v.valides.length + d.valides.length, nbLignes: source.ventes.lignes.length + source.depenses.lignes.length };
-  }, [source, mapV, mapD]);
+    if (!source) return null;
+    const actives = source.feuilles.filter((f) => roles[f.nom] && roles[f.nom] !== "ignorer" && maps[f.nom] && !manquants(roles[f.nom], maps[f.nom]).length);
+    const lus = actives.map((f) => ({ f, ...extraireFeuille(f, roles[f.nom], maps[f.nom]) }));
+    const ops = lus.flatMap((x) => x.valides);
+    const debut = (x) => x.valides.reduce((m, o) => (o.date < m ? o.date : m), "9999");
+    const premiere = lus.filter((x) => x.valides.length).sort((a, b) => debut(a).localeCompare(debut(b)))[0];
+    const soldeDetecte = premiere?.soldeOuverture ?? null; // report à nouveau de la feuille la plus ancienne
+    const solde = soldeSaisi ?? soldeDetecte ?? 0;
+    const entrees = ops.filter((o) => o.sens === "ENTREE"), sorties = ops.filter((o) => o.sens === "SORTIE");
+    const mois = analyserMois(entrees, sorties, solde);
+    const diag = diagnostiquer(mois);
+    return { entrees, sorties, rejets: lus.flatMap((x) => x.rejets), nbLignes: actives.reduce((a, f) => a + f.lignes.length, 0), nbValides: ops.length, mois, diag, profil: diag ? diag.dernier.profil : null, moisCourant: diag ? diag.dernier.cle : null, soldeDetecte, soldeSaisi, solde };
+  }, [source, roles, maps, soldeSaisi]);
 
   const hasReleve = !!source?.recon;
   const profil = resultat?.profil || null;
-  const nomFocus = source ? source.nom.split("—")[0].trim() : "";
+  const nomFocus = source ? source.entreprise.trim() || "Ma PME" : "";
   const instNom = INSTITUTIONS.find((i) => i.id === instActive).nom;
-  const vedette = useMemo(() => (profil ? construireVedette(profil, nomFocus, releveAjoute) : null), [profil, nomFocus, releveAjoute]);
+  const vedette = useMemo(() => (resultat?.diag ? construireVedette(resultat, nomFocus, releveAjoute) : null), [resultat, nomFocus, releveAjoute]);
   const book = useMemo(() => genererPortefeuille(SEEDS[instActive]), [instActive]);
   const partageActive = !!vedette && partages.includes(instActive);
   const vedetteValidee = (valides[instActive] || []).includes(0);
@@ -327,8 +291,8 @@ export default function App() {
   const validerPME = (id) => setValides((v) => ({ ...v, [instActive]: [...(v[instActive] || []), id] }));
   const ecarterPME = (id) => setRejetes((v) => ({ ...v, [instActive]: [...(v[instActive] || []), id] }));
 
-  const importe = impEtape >= 3 && !!resultat;
-  const ajouterReleve = () => setReleveAjoute(rapprocher(resultat.entrees, genererReleveExemple(resultat.entrees)));
+  const importe = impEtape >= 3 && !!profil;
+  const ajouterReleve = () => { const E = resultat.entrees.filter((e) => e.date.startsWith(resultat.moisCourant)); setReleveAjoute(rapprocher(E, genererReleveExemple(E, resultat.moisCourant))); };
 
   // recommandations : envoi par l'institution, lecture et réponse par la PME
   const inst = INSTITUTIONS.find((i) => i.id === instActive);
@@ -385,7 +349,7 @@ export default function App() {
         <nav className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur" style={{ borderColor: C.hairline }}>
           <div className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-3 sm:px-8">
             {(espace === "pme"
-              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["rapprochement", "Rapprochement", GitCompareArrows], ["financement", "Mon financement", ShieldCheck], ["recommandations", "Recommandations", Bell]]
+              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["analyse", "Analyse", Activity], ["rapprochement", "Rapprochement", GitCompareArrows], ["financement", "Mon financement", ShieldCheck], ["recommandations", "Recommandations", Bell]]
               : [["board", "Portefeuille", Layers], ["valider", "À valider", BadgeCheck], ["watch", "Alerte précoce", ShieldAlert], ["liste", "Emprunteurs", Building2], ["suivi", "Suivi", Send]]
             ).map(([id, lbl, Ic]) => { const actif = (espace === "pme" ? pmeVue : instVue) === id; return (
               <button key={id} onClick={() => espace === "pme" ? setPmeVue(id) : setInstVue(id)} className="flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium" style={{ color: actif ? C.ink : C.muted, borderBottom: `2px solid ${actif ? C.teal : "transparent"}` }}>
@@ -393,6 +357,7 @@ export default function App() {
                 {id === "watch" && agg.watchlist.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{agg.watchlist.length}</span>}
                 {id === "import" && importe && <CheckCircle2 size={13} style={{ color: C.vert }} />}
                 {id === "valider" && candidats.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{candidats.length}</span>}
+                {id === "analyse" && importe && resultat.diag.niveau !== "Sain" && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: resultat.diag.niveau === "Alerte précoce" ? C.rouge : C.ambre }}>!</span>}
                 {id === "recommandations" && nonLues > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{nonLues}</span>}
                 {id === "suivi" && reponsesAttente > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{reponsesAttente}</span>}
               </button>); })}
@@ -408,11 +373,12 @@ export default function App() {
           </div>
         )}
         {espace === "pme" ? (
-          pmeVue === "import" ? <Import source={source} mapV={mapV} setMapV={setMapV} mapD={mapD} setMapD={setMapD} resultat={resultat} etape={impEtape} setEtape={setImpEtape} onExemple={chargerExemple} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); }} goVue={setPmeVue} />
-            : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+          pmeVue === "import" ? <Import etape={impEtape} setEtape={setImpEtape} source={source} roles={roles} setRoles={setRoles} maps={maps} setMaps={setMaps} resultat={resultat} soldeSaisi={soldeSaisi} setSoldeSaisi={setSoldeSaisi} setEntreprise={(nom) => setSource({ ...source, entreprise: nom })} erreur={erreurImport} onExemple={chargerExemple} onExempleMensuel={chargerExempleMensuel} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); setErreurImport(null); }} goVue={setPmeVue} />
+            : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} moisCourant={resultat.moisCourant} nbMois={resultat.mois.length} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+            : pmeVue === "analyse" ? (importe ? <AnalyseMensuelle resultat={resultat} entreprise={nomFocus} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "rapprochement" ? (importe ? <Rapprochement hasReleve={hasReleve} recon={source.recon} releveAjoute={releveAjoute} onAjouter={ajouterReleve} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "recommandations" ? (importe ? <Recommandations notifs={notifsPME} onLire={lireNotif} onRepondre={repondreNotif} onCocher={cocherAction} goVue={setPmeVue} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-                : (importe ? <Financement profil={profil} institutions={INSTITUTIONS} partages={partages} setPartages={setPartages} valides={valides} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+                : (importe ? <Financement profil={profil} histo={vedette.histo} goVue={setPmeVue} institutions={INSTITUTIONS} partages={partages} setPartages={setPartages} valides={valides} /> : <PromptImport goImport={() => setPmeVue("import")} />)
         ) : selE ? <Fiche e={selE} partageActive={!selE.isFocus || partageActive} estCandidat={selE.isFocus && candidats.length > 0} onValider={() => { validerPME(0); setSel(null); setInstVue("liste"); }} onEcarter={() => { ecarterPME(0); setSel(null); }} onBack={() => setSel(null)} inst={inst} modeles={modelesInst} notifs={notifsInst.filter((n) => n.empId === selE.id)} onEnvoyer={(c) => envoyerNotif(selE, c)} />
           : instVue === "board" ? <Board agg={agg} setVue={setInstVue} onOpen={setSel} candidatsCount={candidats.length} instNom={instNom} notifsParEmp={notifsParEmp} />
             : instVue === "valider" ? <AValider candidats={candidats} onOpen={setSel} onValider={(id) => validerPME(id)} onEcarter={(id) => ecarterPME(id)} instNom={instNom} />
@@ -429,9 +395,18 @@ export default function App() {
 function PromptImport({ goImport }) { return <Vide icone={UploadCloud} titre="Importez d'abord vos données" texte="Cet écran s'appuie sur votre fichier de gestion. Passez par l'onglet Import pour connecter vos ventes et dépenses." action="Aller à l'import" onAction={goImport} />; }
 
 /* ============================================================ IMPORT (4 étapes) ============================================================ */
-const CHAMPS = [["date", "Date", true], ["montant", "Montant (encaissé)", true], ["canal", "Canal de paiement", true], ["statut", "Statut", true], ["tiers", "Contrepartie", false], ["libelle", "Libellé", false], ["ref", "Référence unique", true]];
 const ETAPES = ["Dépôt", "Correspondance", "Validation", "Profil"];
-function Import({ source, mapV, setMapV, mapD, setMapD, resultat, etape, setEtape, onExemple, onFichier, onReset, goVue }) {
+// fichiers d'exemple servis depuis public/exemples (générés par scripts/generer-exemples.mjs)
+const EXEMPLES_FICHIERS = [
+  { url: "/exemples/quincaillerie-ndar-6-mois.xlsx", fichier: "quincaillerie-ndar-6-mois.xlsx", libelle: "Excel · feuilles Ventes et Dépenses" },
+  { url: "/exemples/journal-caisse-6-mois.csv", fichier: "journal-caisse-6-mois.csv", libelle: "CSV · journal de caisse unique" },
+];
+const ROLES_FEUILLE = [["ventes", "Ventes (entrées)"], ["depenses", "Dépenses (sorties)"], ["journal", "Journal (entrées et sorties)"], ["ignorer", "Ignorer cette feuille"]];
+const LIBELLES_CHAMPS = { date: "Date", montant: "Montant", entree: "Entrées (montant)", sortie: "Sorties (montant)", sens: "Type d'opération", canal: "Canal de paiement", statut: "Statut (payé / impayé)", tiers: "Client / fournisseur", libelle: "Libellé", ref: "Référence unique" };
+const BOUTON_RETOUR = "inline-flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium";
+const BOUTON_SUITE = "inline-flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40";
+
+function Import({ etape, setEtape, source, roles, setRoles, maps, setMaps, resultat, soldeSaisi, setSoldeSaisi, setEntreprise, erreur, onExemple, onExempleMensuel, onFichier, onReset, goVue }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -440,104 +415,258 @@ function Import({ source, mapV, setMapV, mapD, setMapD, resultat, etape, setEtap
           {i < 3 && <div className="h-px w-5 sm:w-8" style={{ background: C.hairline }} />}
         </React.Fragment>))}
       </div>
-
-      {etape === 0 && <Depot onFichier={onFichier} onExemple={onExemple} />}
-      {etape === 1 && source && <Correspondance source={source} mapV={mapV} setMapV={setMapV} mapD={mapD} setMapD={setMapD} onBack={() => { onReset(); }} onNext={() => setEtape(2)} />}
-      {etape === 2 && resultat && <Validation resultat={resultat} onBack={() => setEtape(1)} onNext={() => setEtape(3)} />}
+      {etape === 0 && <Depot onFichier={onFichier} onExemple={onExemple} onExempleMensuel={onExempleMensuel} erreur={erreur} />}
+      {etape === 1 && source && <Correspondance source={source} roles={roles} setRoles={setRoles} maps={maps} setMaps={setMaps} setEntreprise={setEntreprise} onBack={onReset} onNext={() => setEtape(2)} />}
+      {etape === 2 && resultat && <Validation resultat={resultat} soldeSaisi={soldeSaisi} setSoldeSaisi={setSoldeSaisi} onBack={() => setEtape(1)} onNext={() => setEtape(3)} />}
       {etape === 3 && resultat && <ProfilImport resultat={resultat} onBack={() => setEtape(2)} onReset={onReset} goVue={goVue} />}
     </div>
   );
 }
-function Depot({ onFichier, onExemple }) {
+function Depot({ onFichier, onExemple, onExempleMensuel, erreur }) {
   const [drag, setDrag] = useState(false);
+  const exemple = (onClick, Ic, couleur, titre, texte) => (
+    <button onClick={onClick} className="flex items-center gap-3 rounded-xl border bg-white p-4 text-left hover:bg-[#FAFBFA]" style={{ borderColor: C.hairline }}>
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg" style={{ background: "#F0F5F4" }}><Ic size={18} style={{ color: couleur }} /></div>
+      <div><div className="text-sm font-semibold">{titre}</div><div className="text-xs" style={{ color: C.muted }}>{texte}</div></div></button>
+  );
   return (
     <div className="space-y-4">
-      <div><h2 className="text-lg font-semibold">Importez votre fichier de gestion</h2></div>
+      <div><h2 className="text-lg font-semibold">Importez votre fichier de gestion</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>N'importe quel fichier Excel ou CSV contenant une colonne de date : une feuille ventes et une feuille dépenses, un journal de caisse, ou une feuille par mois. VIGIE répertorie tous les mois et analyse leur évolution.</p></div>
       <label onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); if (e.dataTransfer.files[0]) onFichier(e.dataTransfer.files[0]); }}
         className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-10 text-center" style={{ borderColor: drag ? C.teal : C.hairline, background: drag ? "#F0F5F4" : "#fff" }}>
         <UploadCloud size={32} style={{ color: C.teal }} /><div className="mt-3 text-sm font-semibold">Glissez-déposez votre fichier ici</div>
-        <div className="mt-1 text-xs" style={{ color: C.muted }}>ou cliquez pour parcourir · .xlsx, .xlsm, .csv</div>
-        <input type="file" accept=".xlsx,.xlsm,.csv" className="hidden" onChange={(e) => e.target.files[0] && onFichier(e.target.files[0])} /></label>
-      <div className="flex items-center gap-3"><div className="h-px flex-1" style={{ background: C.hairline }} /><span className="text-xs" style={{ color: C.muted }}>ou</span><div className="h-px flex-1" style={{ background: C.hairline }} /></div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <button onClick={() => onExemple(true)} className="flex items-center gap-3 rounded-xl border p-4 text-left hover:bg-[#FAFBFA]" style={{ borderColor: C.hairline }}>
-          <div className="grid h-10 w-10 place-items-center rounded-lg" style={{ background: "#F0F5F4" }}><FileSpreadsheet size={18} style={{ color: C.teal }} /></div>
-          <div><div className="text-sm font-semibold">Fichier complet</div><div className="text-xs" style={{ color: C.muted }}>avec rapprochement bancaire intégré</div></div></button>
-        <button onClick={() => onExemple(false)} className="flex items-center gap-3 rounded-xl border p-4 text-left hover:bg-[#FAFBFA]" style={{ borderColor: C.hairline }}>
-          <div className="grid h-10 w-10 place-items-center rounded-lg" style={{ background: "#F0F5F4" }}><Table2 size={18} style={{ color: C.ambre }} /></div>
-          <div><div className="text-sm font-semibold">Export sans rapprochement</div><div className="text-xs" style={{ color: C.muted }}>ventes + dépenses seules</div></div></button>
+        <div className="mt-1 text-xs" style={{ color: C.muted }}>ou cliquez pour parcourir · .xlsx, .xlsm, .xls, .csv, .txt</div>
+        <input type="file" accept=".xlsx,.xlsm,.xls,.csv,.txt" className="hidden" onChange={(e) => { if (e.target.files[0]) onFichier(e.target.files[0]); e.target.value = ""; }} /></label>
+      {erreur && <div className="flex items-start gap-2 rounded-lg p-3 text-sm" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: C.rouge }}><AlertTriangle size={16} className="mt-0.5 shrink-0" /> {erreur}</div>}
+      <div className="flex items-center gap-3"><div className="h-px flex-1" style={{ background: C.hairline }} /><span className="text-xs" style={{ color: C.muted }}>ou essayez un exemple</span><div className="h-px flex-1" style={{ background: C.hairline }} /></div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {exemple(onExempleMensuel, Activity, C.rouge, "6 mois, en dégradation", "Quincaillerie Ndar · janv. → juin 2026")}
+        {exemple(() => onExemple(true), FileSpreadsheet, C.teal, "Un mois, fichier complet", "NPM Multiservices · avec rapprochement")}
+        {exemple(() => onExemple(false), Table2, C.ambre, "Un mois, sans rapprochement", "NPM Multiservices · ventes + dépenses")}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs" style={{ color: C.muted }}>
+        <span>Télécharger les fichiers d'exemple pour tester l'import :</span>
+        {EXEMPLES_FICHIERS.map((x) => <a key={x.url} href={x.url} download={x.fichier} className="inline-flex items-center gap-1 font-semibold" style={{ color: C.teal }}><Download size={12} /> {x.libelle}</a>)}
       </div>
     </div>
   );
 }
-function Correspondance({ source, mapV, setMapV, mapD, setMapD, onBack, onNext }) {
-  const [tab, setTab] = useState("ventes");
-  const courant = tab === "ventes" ? source.ventes : source.depenses; const mapping = tab === "ventes" ? mapV : mapD; const setMap = tab === "ventes" ? setMapV : setMapD;
+function Correspondance({ source, roles, setRoles, maps, setMaps, setEntreprise, onBack, onNext }) {
+  const { montant } = useMontants();
+  const actives = source.feuilles.filter((f) => roles[f.nom] !== "ignorer");
+  const [onglet, setOnglet] = useState(actives[0]?.nom);
+  const f = actives.find((x) => x.nom === onglet) || actives[0];
+  const role = f && roles[f.nom], map = f && maps[f.nom];
+  const changerRole = (nom, r) => { setRoles({ ...roles, [nom]: r }); if (r !== "ignorer") setMaps({ ...maps, [nom]: autoMap(source.feuilles.find((x) => x.nom === nom).colonnes, r) }); };
+  const erreurs = actives.map((x) => [x.nom, manquants(roles[x.nom], maps[x.nom])]).filter(([, m]) => m.length);
+  const apercu = useMemo(() => (f && !manquants(role, map).length ? extraireFeuille(f, role, map) : null), [f, role, map]);
+  const debitCredit = role === "journal" && [map.entree, map.sortie].some((c) => /d[ée]bit|cr[ée]dit/i.test(c || ""));
   return (
     <div className="space-y-4">
-      <div><h2 className="text-lg font-semibold">Correspondance des colonnes</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Chaque champ requis est relié à une colonne de votre fichier. Détection automatique — corrigez si besoin. C'est ce mapping qui rend l'outil compatible avec n'importe quel format.</p></div>
-      <div className="text-xs" style={{ color: C.muted }}>Source : <span className="font-medium" style={{ color: C.ink }}>{source.nom}</span></div>
-      {source.depenses.lignes.length > 0 && <div className="flex gap-1">{[["ventes", `Ventes (${source.ventes.lignes.length})`], ["depenses", `Dépenses (${source.depenses.lignes.length})`]].map(([id, lbl]) => (<button key={id} onClick={() => setTab(id)} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: tab === id ? C.ink : "#fff", color: tab === id ? "#fff" : C.muted, border: `1px solid ${C.hairline}` }}>{lbl}</button>))}</div>}
-      <Carte className="divide-y" style={{ borderColor: C.hairline }}>
-        {CHAMPS.map(([cle, lbl, req]) => (<div key={cle} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-3 sm:grid-cols-[220px_1fr]">
-          <div className="text-sm font-medium">{lbl} {req && <span style={{ color: C.rouge }}>*</span>}</div>
-          <select value={mapping[cle] || ""} onChange={(e) => setMap({ ...mapping, [cle]: e.target.value })} className="w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none" style={{ borderColor: mapping[cle] ? C.hairline : "#FCA5A5" }}>
-            <option value="">— non mappé —</option>{courant.colonnes.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>))}
+      <div><h2 className="text-lg font-semibold">Correspondance des colonnes</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>VIGIE a repéré les feuilles et les colonnes de votre fichier. Vérifiez le rôle de chaque feuille et corrigez une colonne si besoin : c'est ce qui rend l'outil compatible avec n'importe quel format.</p></div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
+        <div className="text-xs" style={{ color: C.muted }}>Fichier<div className="mt-1 truncate text-sm font-medium" style={{ color: C.ink }}>{source.fichier}</div></div>
+        <label className="text-xs" style={{ color: C.muted }}>Nom de l'entreprise<input value={source.entreprise} onChange={(e) => setEntreprise(e.target.value)} className="mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm outline-none focus:border-[#0F766E]" style={{ borderColor: C.hairline, color: C.ink }} /></label>
+      </div>
+      <Carte>
+        <div className="border-b px-4 py-2.5 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.muted }}>Feuilles du fichier</div>
+        <div className="divide-y" style={{ borderColor: C.hairline }}>{source.feuilles.map((x) => (
+          <div key={x.nom} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 sm:grid-cols-[1fr_auto_240px]" style={{ borderColor: C.hairline }}>
+            <div className="min-w-0 truncate text-sm font-medium">{x.nom}</div>
+            <div className="hidden text-xs sm:block" style={{ color: C.muted }}>{x.lignes.length} lignes</div>
+            <select aria-label={`Rôle de la feuille ${x.nom}`} value={roles[x.nom]} onChange={(e) => changerRole(x.nom, e.target.value)} className="rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}>{ROLES_FEUILLE.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          </div>))}</div>
+      </Carte>
+      {!actives.length ? <div className="rounded-lg p-3 text-sm" style={{ background: "#FFFBEB", color: C.ambre }}>Choisissez au moins une feuille à lire.</div> : (
+        <>
+          {actives.length > 1 && <div className="flex flex-wrap gap-1">{actives.map((x) => (<button key={x.nom} onClick={() => setOnglet(x.nom)} className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: f.nom === x.nom ? C.ink : "#fff", color: f.nom === x.nom ? "#fff" : C.muted, border: `1px solid ${C.hairline}` }}>{x.nom}</button>))}</div>}
+          <Carte className="divide-y" style={{ borderColor: C.hairline }}>
+            {CHAMPS_ROLE(role).map((cle) => { const requis = cle === "date" || (cle === "montant" && role !== "journal"); return (
+              <div key={cle} className="grid grid-cols-[1fr_auto] items-center gap-3 px-4 py-2.5 sm:grid-cols-[220px_1fr]" style={{ borderColor: C.hairline }}>
+                <div className="text-sm font-medium">{LIBELLES_CHAMPS[cle]} {requis && <span style={{ color: C.rouge }}>*</span>}</div>
+                <select aria-label={LIBELLES_CHAMPS[cle]} value={map[cle] || ""} onChange={(e) => setMaps({ ...maps, [f.nom]: { ...map, [cle]: e.target.value } })} className="w-full rounded-lg border bg-white px-3 py-2 text-sm outline-none" style={{ borderColor: requis && !map[cle] ? "#FCA5A5" : C.hairline }}>
+                  <option value="">— non utilisée —</option>{f.colonnes.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+              </div>); })}
+          </Carte>
+          {role === "journal" && <div className="text-xs leading-relaxed" style={{ color: C.muted }}>Journal : VIGIE lit les colonnes Entrées / Sorties, sinon la colonne de type (vente, achat, loyer…), sinon le signe du montant (négatif = sortie). Sans colonne de statut, chaque opération est considérée comme payée.{debitCredit && " Débit / crédit : le crédit est lu comme une entrée (convention d'un relevé bancaire) ; inversez les colonnes si votre fichier suit la convention comptable."}</div>}
+          {apercu && (
+            <Carte>
+              <div className="border-b px-4 py-2.5 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.muted }}>Lecture des premières lignes · {f.nom}</div>
+              <div className="overflow-x-auto"><table className="w-full text-left text-xs"><tbody>
+                {apercu.valides.slice(0, 4).map((o, i) => (
+                  <tr key={i} className="border-b last:border-0" style={{ borderColor: C.hairline }}>
+                    <td className="whitespace-nowrap px-4 py-2">{new Date(`${o.date}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })}</td>
+                    <td className="px-2 py-2 font-semibold" style={{ color: o.sens === "ENTREE" ? C.vert : C.rouge }}>{o.sens === "ENTREE" ? "Entrée" : "Sortie"}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{montant(o.montant)}</td>
+                    <td className="px-2 py-2" style={{ color: C.muted }}>{o.canal}</td>
+                    <td className="px-2 py-2" style={{ color: o.statut === "Payé" ? C.muted : C.ambre }}>{o.statut}</td>
+                    <td className="max-w-[12rem] truncate px-2 py-2 pr-4" style={{ color: C.muted }}>{o.tiers !== "—" ? o.tiers : o.libelle}</td>
+                  </tr>))}
+              </tbody></table></div>
+              {!apercu.valides.length && <div className="px-4 py-3 text-xs" style={{ color: C.rouge }}>Aucune ligne lisible avec ces colonnes : vérifiez la date et le montant.</div>}
+            </Carte>
+          )}
+        </>
+      )}
+      {erreurs.length > 0 && <div className="text-xs" style={{ color: C.rouge }}>{erreurs.map(([nom, m]) => `${nom} : indiquez ${m.join(" et ")}`).join(" · ")}</div>}
+      <div className="flex justify-between">
+        <button onClick={onBack} className={BOUTON_RETOUR} style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
+        <button onClick={onNext} disabled={!actives.length || erreurs.length > 0} className={BOUTON_SUITE} style={{ background: C.ink }}>Valider <ArrowRight size={15} /></button>
+      </div>
+    </div>
+  );
+}
+function Validation({ resultat, soldeSaisi, setSoldeSaisi, onBack, onNext }) {
+  const { montant } = useMontants();
+  const { nbLignes, nbValides, rejets, mois, soldeDetecte } = resultat;
+  const [texteSolde, setTexteSolde] = useState(soldeSaisi != null ? String(soldeSaisi) : "");
+  const raisons = Object.entries(rejets.reduce((a, r) => { (a[r.raison] = a[r.raison] || []).push(r); return a; }, {})).sort((a, b) => b[1].length - a[1].length);
+  return (
+    <div className="space-y-4">
+      <div><h2 className="text-lg font-semibold">Validation</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce que VIGIE a retenu de votre fichier, et pourquoi certaines lignes ont été écartées.</p></div>
+      <div className="grid grid-cols-3 gap-4">
+        {[["Lignes lues", nbLignes, C.ink], ["Opérations retenues", nbValides, C.vert], ["Lignes écartées", rejets.length, rejets.length ? C.rouge : C.muted]].map(([l, v, c]) => (
+          <Carte key={l} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}
+      </div>
+      {raisons.length > 0 && (
+        <Carte className="p-4"><div className="mb-2 text-xs font-semibold" style={{ color: C.muted }}>Lignes écartées</div>
+          <ul className="space-y-1 text-sm">{raisons.map(([raison, rs]) => <li key={raison}><span className="font-semibold tabular-nums">{rs.length}</span> · {raison} <span className="text-xs" style={{ color: C.muted }}>({rs.slice(0, 6).map((r) => `${r.feuille} l. ${r.ligne}`).join(", ")}{rs.length > 6 ? "…" : ""})</span></li>)}</ul></Carte>
+      )}
+      <Carte className="p-4">
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2"><div className="text-xs font-semibold" style={{ color: C.muted }}>Mois répertoriés</div>{mois.length > 0 && <div className="text-xs" style={{ color: C.muted }}>{mois.length} mois · {libelleMois(mois[0].cle)} → {libelleMois(mois[mois.length - 1].cle)}</div>}</div>
+        {mois.length ? <div className="flex flex-wrap gap-1.5">{mois.map((m) => <span key={m.cle} className="rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: m.nbOps ? C.hairline : "#FDE68A", background: m.nbOps ? "#fff" : "#FFFBEB", color: m.nbOps ? C.ink : C.ambre }}>{libelleMois(m.cle)} · {m.nbOps ? `${m.nbOps} op.` : "aucune opération"}</span>)}</div>
+          : <div className="text-sm" style={{ color: C.rouge }}>Aucune opération retenue : revenez à la correspondance des colonnes.</div>}
+      </Carte>
+      <Carte className="p-4">
+        <label className="block text-xs font-semibold" style={{ color: C.muted }}>Trésorerie disponible au début du fichier <span className="font-normal">(facultatif)</span>
+          <input inputMode="numeric" value={texteSolde} placeholder={soldeDetecte != null ? String(soldeDetecte) : "0"} onChange={(e) => { setTexteSolde(e.target.value); setSoldeSaisi(e.target.value.trim() === "" ? null : parseMontant(e.target.value)); }} className="mt-1.5 w-full max-w-xs rounded-lg border bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0F766E]" style={{ borderColor: C.hairline, color: C.ink }} /></label>
+        <div className="mt-1.5 text-[11px]" style={{ color: C.muted }}>{soldeDetecte != null ? `Détecté dans le fichier (report à nouveau / solde initial) : ${montant(soldeDetecte)}. Saisissez un autre montant pour le remplacer.` : soldeSaisi != null ? `Non trouvé dans le fichier : le montant saisi (${montant(soldeSaisi)}) est utilisé.` : "Non trouvé dans le fichier : sans lui, la trésorerie part de zéro et les jours de trésorerie sont sous-estimés."}</div>
       </Carte>
       <div className="flex justify-between">
-        <button onClick={onBack} className="inline-flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
-        <button onClick={onNext} disabled={!mapV.date || !mapV.montant} className="inline-flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" style={{ background: C.ink }}>Valider <ArrowRight size={15} /></button>
-      </div>
-    </div>
-  );
-}
-function Validation({ resultat, onBack, onNext }) {
-  const { nbLignes, nbValides, rejets } = resultat;
-  return (
-    <div className="space-y-4">
-      <div><h2 className="text-lg font-semibold">Validation</h2></div>
-      <div className="grid grid-cols-3 gap-4">
-        <Carte className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>Lignes lues</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums">{nbLignes}</div></Carte>
-        <Carte className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>Valides</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: C.vert }}>{nbValides}</div></Carte>
-        <Carte className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>Rejetées</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: rejets.length ? C.rouge : C.muted }}>{rejets.length}</div></Carte>
-      </div>
-      <div className="flex justify-between">
-        <button onClick={onBack} className="inline-flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
-        <button onClick={onNext} className="inline-flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}>Voir le profil <ArrowRight size={15} /></button>
+        <button onClick={onBack} className={BOUTON_RETOUR} style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
+        <button onClick={onNext} disabled={!nbValides} className={BOUTON_SUITE} style={{ background: C.ink }}>Voir le profil <ArrowRight size={15} /></button>
       </div>
     </div>
   );
 }
 function ProfilImport({ resultat, onBack, onReset, goVue }) {
   const { court } = useMontants();
-  const p = resultat.profil;
+  const { profil: p, mois, diag } = resultat;
+  const st = ETATS_MOIS[diag.niveau];
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Profil calculé sur vos données</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Vos chiffres, avec l'argent réellement encaissé distingué de ce qui reste à recevoir.</p></div>
+      <div><h2 className="text-lg font-semibold">Profil calculé sur vos données</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>{mois.length > 1 ? `${mois.length} mois analysés. Chiffres de ${libelleMois(diag.dernier.cle, true)}, le dernier mois du fichier : ` : `Chiffres de ${libelleMois(diag.dernier.cle, true)} : `}l'argent réellement encaissé, distingué de ce qui reste à recevoir.</p></div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[["Encaissé (réel)", court(p.encaisse), C.vert], ["À recevoir", court(p.creances), C.ambre], ["Décaissé (réel)", court(p.decaisse), C.rouge], ["À payer", court(p.dettes), C.or]].map(([l, v, c], i) => (
           <Carte key={i} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}
       </div>
-      <div className="flex items-center gap-3 rounded-xl p-4" style={{ background: "#F0F5F4", border: `1px solid ${C.hairline}` }}>
-        <CheckCircle2 size={18} style={{ color: C.vert }} /><div className="text-sm"><span className="font-semibold">Import terminé.</span></div>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl p-4" style={{ background: st.bg, border: `1px solid ${st.bd}` }}>
+        {diag.niveau === "Sain" ? <CheckCircle2 size={18} style={{ color: st.c }} /> : <ShieldAlert size={18} style={{ color: st.c }} />}
+        <div className="flex-1 text-sm"><span className="font-semibold" style={{ color: st.c }}>{diag.niveau === "Sain" ? "Import terminé." : diag.niveau === "Alerte précoce" ? "Alerte précoce détectée." : "Point de vigilance détecté."}</span> <span style={{ color: C.muted }}>Score de {diag.dernier.score}/100 en {libelleMois(diag.dernier.cle, true)}{diag.pic ? `, contre ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)}` : ""}.</span></div>
+        <button onClick={() => goVue("analyse")} className="text-sm font-semibold" style={{ color: C.teal }}>Voir l'analyse mois par mois →</button>
       </div>
       <div className="flex flex-wrap justify-between gap-2">
-        <button onClick={onBack} className="inline-flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
+        <button onClick={onBack} className={BOUTON_RETOUR} style={{ borderColor: C.hairline }}><ArrowLeft size={15} /> Retour</button>
         <div className="flex gap-2">
-          <button onClick={onReset} className="inline-flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}><RefreshCw size={14} /> Autre fichier</button>
-          <button onClick={() => goVue("tresorerie")} className="inline-flex items-center gap-1 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}>Voir ma trésorerie <ArrowRight size={15} /></button>
+          <button onClick={onReset} className={BOUTON_RETOUR} style={{ borderColor: C.hairline }}><RefreshCw size={14} /> Autre fichier</button>
+          <button onClick={() => goVue(mois.length > 1 ? "analyse" : "tresorerie")} className={BOUTON_SUITE} style={{ background: C.ink }}>{mois.length > 1 ? "Voir l'analyse" : "Voir ma trésorerie"} <ArrowRight size={15} /></button>
         </div>
       </div>
     </div>
   );
 }
 
+/* ============================================================ PME : ANALYSE MOIS PAR MOIS ============================================================ */
+const ETATS_MOIS = { Sain: { c: C.vert, bg: "#ECFDF5", bd: "#A7F3D0" }, Vigilance: { c: C.ambre, bg: "#FFFBEB", bd: "#FDE68A" }, "Alerte précoce": { c: C.rouge, bg: "#FEF2F2", bd: "#FECACA" } };
+const couleurSignal = (s) => (s >= 65 ? C.vert : s >= 45 ? C.or : C.rouge);
+function EtatMois({ etat }) { const s = ETATS_MOIS[etat]; return <span className="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: s.bg, color: s.c, border: `1px solid ${s.bd}` }}>{etat}</span>; }
+function AnalyseMensuelle({ resultat, entreprise }) {
+  const { montant, court } = useMontants();
+  const { mois, diag, solde, soldeDetecte, soldeSaisi } = resultat;
+  const st = ETATS_MOIS[diag.niveau], der = diag.dernier;
+  const donnees = mois.map((m) => ({ mois: libelleMois(m.cle), encaisse: m.encaisse, decaisse: m.decaisse, score: m.score, etat: m.etat }));
+  const titre = { "Alerte précoce": "Alerte précoce : la situation se dégrade", Vigilance: "Vigilance : des signaux faiblissent", Sain: "Situation saine" }[diag.niveau];
+  const phrases = [
+    diag.pic ? `Le score est passé de ${diag.pic.score} en ${libelleMois(diag.pic.cle, true)} à ${der.score} en ${libelleMois(der.cle, true)} (${diag.chute} points).`
+      : mois.length === 1 ? `Votre fichier couvre un seul mois (${libelleMois(der.cle, true)}) : la tendance apparaîtra dès qu'il contiendra au moins deux mois.` : `Score de ${der.score}/100 en ${libelleMois(der.cle, true)}, sans baisse en cours.`,
+    diag.premiereAlerte && `VIGIE aurait déclenché l'alerte précoce dès ${libelleMois(diag.premiereAlerte.cle, true)}.`,
+    diag.joursAvantTension != null && (diag.joursAvantTension === 0 ? "La trésorerie disponible est déjà épuisée au rythme actuel." : `Au rythme des deux derniers mois, la trésorerie disponible serait épuisée dans environ ${diag.joursAvantTension} jours.`),
+  ].filter(Boolean);
+  const Point = ({ cx, cy, payload }) => <circle cx={cx} cy={cy} r={4.5} fill="#fff" stroke={ETATS_MOIS[payload.etat].c} strokeWidth={2.5} />;
+  return (
+    <div className="space-y-5">
+      <div><h2 className="text-lg font-semibold">Analyse mois par mois</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>{entreprise} · {mois.length > 1 ? `${mois.length} mois répertoriés, de ${libelleMois(mois[0].cle)} à ${libelleMois(der.cle)}` : `1 mois répertorié (${libelleMois(der.cle)})`} · {mois.reduce((a, m) => a + m.nbOps, 0)} opérations.</p></div>
+      <div className="rounded-2xl p-5 sm:p-6" style={{ background: st.bg, border: `1px solid ${st.bd}` }}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: st.c }}>{diag.niveau === "Sain" ? <CheckCircle2 size={17} /> : <ShieldAlert size={17} />} {titre}</div>
+            <div className="mt-2 space-y-1 text-sm leading-relaxed">{phrases.map((p) => <p key={p}>{p}</p>)}</div>
+            {diag.signauxEnBaisse.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{diag.signauxEnBaisse.map((s) => <span key={s.nom} className="rounded-full bg-white px-2.5 py-1 text-xs" style={{ border: `1px solid ${st.bd}` }}><span className="font-semibold">{s.nom}</span> <span style={{ color: C.muted }}>{s.de} → </span><span className="font-semibold" style={{ color: couleurSignal(s.a) }}>{s.a}</span></span>)}</div>}
+          </div>
+          <div className="sm:text-right"><div className="text-[11px]" style={{ color: C.muted }}>Score de {libelleMois(der.cle)}</div><div className="font-serif text-4xl font-semibold tabular-nums" style={{ color: st.c }}>{der.score}</div>{der.delta != null && <div className="text-xs"><Trend delta={der.delta} /> <span style={{ color: C.muted }}>sur un mois</span></div>}</div>
+        </div>
+      </div>
+      <Carte className="p-5">
+        <div className="mb-1 text-sm font-semibold">Encaissements, décaissements et score</div>
+        <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]" style={{ color: C.muted }}><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: C.vert }} /> encaissé</span><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: "#F2A7A7" }} /> décaissé</span><span className="flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: C.teal }} /> score (échelle de droite)</span><span className="flex items-center gap-1"><span className="h-0 w-3 border-t border-dashed" style={{ borderColor: C.rouge }} /> seuil d'alerte ({SEUIL_ALERTE})</span></div>
+        <ResponsiveContainer width="100%" height={240}>
+          <ComposedChart data={donnees} margin={{ left: 0, right: 0, top: 8, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} />
+            <XAxis dataKey="mois" tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} />
+            <YAxis yAxisId="m" tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={60} axisLine={false} tickLine={false} />
+            <YAxis yAxisId="s" orientation="right" domain={[0, 100]} tick={{ fontSize: 10, fill: C.muted }} width={30} axisLine={false} tickLine={false} />
+            <Tooltip formatter={(v, n) => (n === "score" ? [`${v}/100`, "Score"] : [montant(v), n === "encaisse" ? "Encaissé" : "Décaissé"])} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} cursor={{ fill: "#F5F6F4" }} />
+            <ReferenceLine yAxisId="s" y={SEUIL_ALERTE} stroke={C.rouge} strokeDasharray="4 3" />
+            <Bar yAxisId="m" dataKey="encaisse" fill={C.vert} radius={[3, 3, 0, 0]} maxBarSize={28} />
+            <Bar yAxisId="m" dataKey="decaisse" fill="#F2A7A7" radius={[3, 3, 0, 0]} maxBarSize={28} />
+            <Line yAxisId="s" type="monotone" dataKey="score" stroke={C.teal} strokeWidth={2.4} dot={<Point />} activeDot={{ r: 6 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </Carte>
+      <Carte>
+        <div className="border-b px-5 py-3 text-sm font-semibold" style={{ borderColor: C.hairline }}>Mois par mois</div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm">
+          <thead><tr className="text-left text-[11px]" style={{ color: C.muted }}>{["Mois", "Opérations", "Ventes", "Encaissé", "Décaissé", "Solde du mois", "Trésorerie dispo.", "Score", "Évolution", "État"].map((h, i) => <th key={h} className={"px-3 py-2 font-semibold " + (i === 0 ? "pl-5" : "") + (i >= 1 && i <= 7 ? " text-right" : "")}>{h}</th>)}</tr></thead>
+          <tbody>{mois.map((m) => (
+            <tr key={m.cle} className="border-t" style={{ borderColor: C.hairline }}>
+              <td className="whitespace-nowrap py-2.5 pl-5 pr-3 font-medium">{libelleMois(m.cle)}</td>
+              <td className="px-3 text-right tabular-nums" style={{ color: m.nbOps ? C.ink : C.ambre }}>{m.nbOps}</td>
+              <td className="px-3 text-right tabular-nums">{court(m.ventes)}</td>
+              <td className="px-3 text-right tabular-nums" style={{ color: C.vert }}>{court(m.encaisse)}</td>
+              <td className="px-3 text-right tabular-nums" style={{ color: C.rouge }}>{court(m.decaisse)}</td>
+              <td className="px-3 text-right tabular-nums" style={{ color: m.net >= 0 ? C.ink : C.rouge }}>{m.net > 0 ? "+" : ""}{court(m.net)}</td>
+              <td className="px-3 text-right tabular-nums" style={{ color: m.disponible >= 0 ? C.ink : C.rouge }}>{court(m.disponible)}</td>
+              <td className="px-3 text-right font-serif text-base font-semibold tabular-nums">{m.score}</td>
+              <td className="px-3">{m.delta != null ? <Trend delta={m.delta} /> : <span style={{ color: C.muted }}>—</span>}</td>
+              <td className="px-3 pr-5"><EtatMois etat={m.etat} /></td>
+            </tr>))}</tbody>
+        </table></div>
+      </Carte>
+      <Carte>
+        <div className="border-b px-5 py-3" style={{ borderColor: C.hairline }}><div className="text-sm font-semibold">Les six signaux, mois par mois</div><div className="text-[11px]" style={{ color: C.muted }}>Vert : 65 et plus · ocre : 45 à 64 · rouge : moins de 45 · gris : pas encore assez d'historique pour ce signal</div></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-xs">
+          <thead><tr style={{ color: C.muted }}><th className="py-2 pl-5 pr-3 text-left font-semibold">Signal (poids)</th>{mois.map((m) => <th key={m.cle} className="px-1 py-2 text-center font-semibold">{libelleMois(m.cle)}</th>)}</tr></thead>
+          <tbody>{der.signaux.map((s, j) => (
+            <tr key={s.nom} className="border-t" style={{ borderColor: C.hairline }}>
+              <td className="whitespace-nowrap py-1.5 pl-5 pr-3 font-medium">{s.nom} <span style={{ color: C.muted }}>· {pct(s.poids)}</span></td>
+              {mois.map((m) => { const x = m.signaux[j]; return <td key={m.cle} className="px-1 py-1.5"><div className="rounded-md py-1 text-center font-semibold tabular-nums" title={x.neutre ? "Historique insuffisant : valeur neutre" : undefined} style={x.neutre ? { background: "#EEF0ED", color: C.muted } : { background: couleurSignal(x.score) + "1F", color: couleurSignal(x.score) }}>{x.neutre ? "n.d." : x.score}</div></td>; })}
+            </tr>))}</tbody>
+        </table></div>
+      </Carte>
+      <div className="rounded-lg p-3 text-[11px] leading-relaxed" style={{ background: "#fff", border: `1px solid ${C.hairline}`, color: C.muted }}>
+        Trésorerie disponible : solde de départ ({soldeSaisi != null ? `saisi : ${montant(solde)}` : soldeDetecte != null ? `détecté dans le fichier : ${montant(solde)}` : "non renseigné, compté à zéro"}) + encaissements − décaissements, moins les factures fournisseurs encore impayées.
+        Alerte précoce : score inférieur à {SEUIL_ALERTE} avec une baisse d'au moins {CHUTE_ALERTE} points en un mois, ou de {CHUTE_PIC} points depuis le meilleur des trois mois précédents (règle du portefeuille des institutions, complétée pour les dégradations lentes).
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================ PME : TRÉSORERIE ============================================================ */
-function Tresorerie({ profil: p }) {
+function Tresorerie({ profil: p, moisCourant, nbMois }) {
   const { montant, court } = useMontants();
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Ma trésorerie</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce qui est réellement entré, ce qui reste à encaisser, et votre position si tout se règle.</p></div>
+      <div><h2 className="text-lg font-semibold">Ma trésorerie · {libelleMois(moisCourant, true)}</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Ce qui est réellement entré, ce qui reste à encaisser, et votre position si tout se règle{nbMois > 1 ? ` — dernier des ${nbMois} mois de votre fichier (voir l'onglet Analyse pour l'évolution)` : ""}.</p></div>
       <Carte className="p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div><div className="text-xs font-medium" style={{ color: C.muted }}>Trésorerie nette réalisée (mois)</div><div className="mt-1 font-serif text-3xl font-semibold tabular-nums" style={{ color: p.realise >= 0 ? C.teal : C.rouge }}>{montant(p.realise)}</div><div className="mt-1 text-[11px]" style={{ color: C.muted }}>encaissé − décaissé, hors impayés</div></div>
@@ -649,9 +778,8 @@ function ResultatRappro({ r }) {
 }
 
 /* ============================================================ PME : FINANCEMENT (+ consentement) ============================================================ */
-function Financement({ profil: p, institutions, partages, setPartages, valides }) {
+function Financement({ profil: p, histo, goVue, institutions, partages, setPartages, valides }) {
   const sante = p.marge > 0.25 ? { l: "Solide", c: C.vert } : p.marge > 0.1 ? { l: "Correct", c: C.or } : { l: "Fragile", c: C.rouge };
-  const histo = genererHistorique(p);
   const ind = [["Taux d'encaissement", p.taux, "part des ventes déjà payées", p.taux > 0.7], ["Marge nette", p.marge, "(ventes − charges) / ventes", p.marge > 0.25], ["Poids des charges fixes", p.poidsFixe, "loyer + salaires / ventes", p.poidsFixe < 0.2]];
   return (
     <div className="space-y-5">
@@ -661,15 +789,15 @@ function Financement({ profil: p, institutions, partages, setPartages, valides }
         <div className="mt-1 font-serif text-4xl font-semibold" style={{ color: sante.c }}>{sante.l}</div>
       </Carte>
       <Carte className="p-5">
-        <div className="mb-1 text-sm font-semibold">Votre évolution sur 4 mois</div>
-        <div className="mb-3 text-[11px]" style={{ color: C.muted }}>Votre santé financière, mois par mois.</div>
-        <ResponsiveContainer width="100%" height={160}>
+        <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2"><div className="text-sm font-semibold">Votre évolution sur {histo.length} mois</div><button onClick={() => goVue("analyse")} className="text-xs font-semibold" style={{ color: C.teal }}>Analyse détaillée →</button></div>
+        <div className="mb-3 text-[11px]" style={{ color: C.muted }}>Votre score VIGIE, mois par mois.</div>
+        {histo.length < 2 ? <div className="rounded-lg p-3 text-sm" style={{ background: C.canvas, color: C.muted }}>Votre fichier couvre un seul mois ({histo[0].mois}, score {histo[0].score}/100) : importez plusieurs mois pour suivre votre évolution.</div> : <ResponsiveContainer width="100%" height={160}>
           <AreaChart data={histo} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
             <defs><linearGradient id="gfin" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.teal} stopOpacity={0.25} /><stop offset="100%" stopColor={C.teal} stopOpacity={0} /></linearGradient></defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="mois" tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} /><YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: C.muted }} width={28} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(v) => [`${v}/100`, "Santé"]} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Area type="monotone" dataKey="score" stroke={C.teal} strokeWidth={2.2} fill="url(#gfin)" />
+            <Tooltip formatter={(v) => [`${v}/100`, "Score"]} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><ReferenceLine y={SEUIL_ALERTE} stroke={C.rouge} strokeDasharray="4 3" /><Area type="monotone" dataKey="score" stroke={C.teal} strokeWidth={2.2} fill="url(#gfin)" dot={{ r: 3, fill: C.teal }} />
           </AreaChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </Carte>
       <Carte className="p-5"><div className="mb-3 text-sm font-semibold">Ce qui compte pour un financeur</div>
         <div className="space-y-3">{ind.map(([l, v, note, bon], i) => (
@@ -738,7 +866,7 @@ function LigneWL({ e, onOpen, notif }) {
     <button onClick={() => onOpen(e.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left text-sm hover:bg-[#FAFBFA]">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg font-serif text-sm font-bold" style={{ background: "#F0F5F4", color: C.teal }}>{e.score}</div>
       <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-medium">{e.nom}</span>{e.isFocus && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ background: "#F0F5F4", color: C.teal }}><Link2 size={10} /> partagé</span>}{notif && <EtatChip etat={notif.statut} icone />}</div><div className="text-[11px]" style={{ color: C.muted }}>{e.secteur} · {e.region}</div></div>
-      <div className="hidden text-right sm:block"><div className="text-[11px]" style={{ color: C.muted }}>stress</div><div className="text-sm font-semibold" style={{ color: C.rouge }}>J+{e.joursAvantStress}</div></div>
+      <div className="hidden text-right sm:block"><div className="text-[11px]" style={{ color: C.muted }}>stress</div><div className="text-sm font-semibold" style={{ color: C.rouge }}>{e.joursAvantStress != null ? `J+${e.joursAvantStress}` : "—"}</div></div>
       <div className="hidden sm:block"><Trend delta={e.scoreDelta} /></div>
       <div className="text-right"><div className="font-semibold tabular-nums">{court(e.ead)}</div><div className="text-[11px]" style={{ color: C.muted }}>encours</div></div><ChevronRight size={16} style={{ color: C.muted }} />
     </button>
@@ -832,14 +960,14 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
         </div>
       )}
       {partage ? (<div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Carte className="p-5"><div className="mb-1 text-sm font-semibold">{f.histo ? "Évolution du score (4 mois)" : "Trésorerie"}</div>
+        <Carte className="p-5"><div className="mb-1 text-sm font-semibold">{f.histo ? `Évolution du score (${f.histo.length} mois)` : "Trésorerie"}</div>
           {f.histo ? (
             <div>
               <ResponsiveContainer width="100%" height={150}>
                 <AreaChart data={f.histo} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
                   <defs><linearGradient id="ghi" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.teal} stopOpacity={0.25} /><stop offset="100%" stopColor={C.teal} stopOpacity={0} /></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} /><XAxis dataKey="mois" tick={{ fontSize: 10, fill: C.muted }} axisLine={false} tickLine={false} /><YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: C.muted }} width={28} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => [`${v}/100`, "Score"]} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><Area type="monotone" dataKey="score" stroke={C.teal} strokeWidth={2} fill="url(#ghi)" />
+                  <Tooltip formatter={(v) => [`${v}/100`, "Score"]} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} /><ReferenceLine y={SEUIL_ALERTE} stroke={C.rouge} strokeDasharray="4 3" /><Area type="monotone" dataKey="score" stroke={C.teal} strokeWidth={2} fill="url(#ghi)" dot={{ r: 3, fill: C.teal }} />
                 </AreaChart>
               </ResponsiveContainer>
               <div className="mt-2 flex flex-wrap justify-between gap-x-3 text-[11px]" style={{ color: C.muted }}><span>Encaissé {court(f.bridge.encaisse)}</span><span>À recevoir {court(f.bridge.creances)}</span><span>Position {court(f.bridge.projete)}</span></div>
@@ -853,7 +981,7 @@ function Fiche({ e, partageActive, estCandidat, onValider, onEcarter, onBack, in
           )}
         </Carte>
         <Carte className="p-5"><div className="mb-3 text-sm font-semibold">Décomposition du score</div>
-          <div className="space-y-3">{f.signaux.map((s) => (<div key={s.nom}><div className="flex items-baseline justify-between text-sm"><span className="font-medium">{s.nom}</span><span className="tabular-nums" style={{ color: C.muted }}><span className="font-semibold" style={{ color: C.ink }}>{s.score}</span>/100 <span className="text-[10px]">· {pct(s.poids)}</span></span></div><div className="mt-1"><Barre valeur={s.score} couleur={s.score >= 65 ? C.vert : s.score >= 45 ? C.or : C.rouge} /></div></div>))}</div>
+          <div className="space-y-3">{f.signaux.map((s) => (<div key={s.nom}><div className="flex items-baseline justify-between text-sm"><span className="font-medium">{s.nom}</span><span className="tabular-nums" style={{ color: C.muted }}><span className="font-semibold" style={{ color: C.ink }}>{s.score}</span>/100 <span className="text-[10px]">· {pct(s.poids)}{s.neutre ? " · neutre (historique insuffisant)" : ""}</span></span></div><div className="mt-1"><Barre valeur={s.score} couleur={s.score >= 65 ? C.vert : s.score >= 45 ? C.or : C.rouge} /></div></div>))}</div>
         </Carte>
       </div>) : (
         <div className="rounded-xl p-6 text-center text-sm" style={{ background: "#FFFBEB", border: "1px solid #FDE68A", color: C.muted }}>Profil non partagé — aucun signal disponible.</div>
@@ -866,8 +994,7 @@ function ficheData(e) {
   const noms = [["Jours de trésorerie", 0.22], ["Régularité des encaissements", 0.20], ["Tendance du CA", 0.15], ["Poids des charges fixes", 0.15], ["Stabilité du solde", 0.14], ["Discipline de trésorerie", 0.14]];
   if (e.isFocus && e.profil) {
     const p = e.profil;
-    const signaux = noms.map(([nom, poids]) => ({ nom, poids, score: Math.max(8, Math.min(96, e.score + Math.round((noms.findIndex((n) => n[0] === nom) - 2.5) * 3))) }));
-    return { bridge: { encaisse: p.encaisse, creances: p.creances, decaisse: p.decaisse, projete: p.projete }, histo: e.histo, signaux };
+    return { bridge: { encaisse: p.encaisse, creances: p.creances, decaisse: p.decaisse, projete: p.projete }, histo: e.histo, signaux: e.signaux }; // signaux réels du dernier mois
   }
   const r = rng(1000 + e.id); const serie = []; let solde = e.ead * (0.12 + r() * 0.1); const net = e.score > 60 ? 1 : e.score > 50 ? 0.4 : -0.5;
   for (let d = 0; d <= 60; d++) { const date = new Date(2026, 10, 15 + d); const choc = (d === 22 || d === 44) ? -e.ead * 0.11 : 0; solde += net * (e.ead * 0.004) * (0.6 + r() * 0.8) + choc; serie.push({ d, date, dateLabel: date.toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }), solde }); }
@@ -919,8 +1046,9 @@ const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 // ce que l'institution observe dans les données partagées : projection, signaux faibles, profil, rapprochement
 function pointsVigilance(e, f) {
   const pts = [];
-  if (f.rupture) pts.push({ cle: "Tension de trésorerie", valeur: dateLongue(f.rupture.date), grave: true });
-  [...f.signaux].filter((s) => s.score < 65).sort((a, b) => a.score - b.score).forEach((s) => pts.push({ cle: s.nom, valeur: `indicateur à ${s.score}/100`, grave: s.score < 45 }));
+  const tension = f.rupture ? f.rupture.date : e.dateTension; // projection du portefeuille, ou analyse du fichier de la PME
+  if (tension) pts.push({ cle: "Tension de trésorerie", valeur: dateLongue(tension), grave: true });
+  [...f.signaux].filter((s) => s.score < 65 && !s.neutre).sort((a, b) => a.score - b.score).forEach((s) => pts.push({ cle: s.nom, valeur: `indicateur à ${s.score}/100`, grave: s.score < 45 }));
   const p = e.profil;
   if (p && p.ventesTotal && p.creances / p.ventesTotal > 0.15) pts.push({ cle: "Ventes impayées", valeur: `${MSG_FCFA.montant(p.creances)}, soit ${pct(p.creances / p.ventesTotal)} des ventes du mois (${pluriel(p.nbCreances, "facture")})` });
   if (e.rappro && e.rappro.nonEnregistre > 0) pts.push({ cle: "Encaissements non enregistrés", valeur: `${MSG_FCFA.montant(e.rappro.nonEnregistre)} (${pluriel(e.rappro.nb, "opération")})` });

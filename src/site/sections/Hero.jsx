@@ -4,7 +4,7 @@ import { PME, PORTEFEUILLE } from "../demo.js";
 import { Conteneur, BoutonDemo, Legende } from "../components/ui.jsx";
 import { CadreApp, BlocTresorerie, BlocFlux, LigneWatchlist } from "../components/Apercus.jsx";
 
-const ATOUTS = ["Import Excel ou CSV, sans logiciel comptable", "Espèces et mobile money pris en compte", "Partage du profil sur consentement"];
+const ATOUTS = ["N'importe quel fichier Excel ou CSV, analysé mois par mois", "Espèces et mobile money pris en compte", "Partage du profil sur consentement"];
 
 export default function Hero() {
   return (

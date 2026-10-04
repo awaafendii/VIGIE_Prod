@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ShieldAlert, ChevronRight, ChevronDown, CheckCircle2, AlertTriangle, XCircle, Smartphone, Landmark, Banknote, Link2, Store } from "lucide-react";
 import { C, CANAUX } from "../theme.js";
-import { PME, PORTEFEUILLE } from "../demo.js";
+import { PME, PORTEFEUILLE, ANALYSE } from "../demo.js";
 import { Carte, Barre } from "./ui.jsx";
 
 /* ============================================================
@@ -113,18 +113,19 @@ export function ApercuRapprochement() {
   );
 }
 
-function Courbe({ points }) {
+function Courbe({ points, couleurs, seuil }) {
   const W = 300, H = 110, x = (i) => 24 + i * ((W - 48) / (points.length - 1)), y = (v) => 86 - v * 0.76;
   const ligne = points.map(([, v], i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(" ");
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={"Évolution de la santé financière : " + points.map(([m, v]) => `${m} ${v}`).join(", ")}>
       <defs><linearGradient id="site-gfin" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.teal} stopOpacity="0.25" /><stop offset="100%" stopColor={C.teal} stopOpacity="0" /></linearGradient></defs>
       {[0, 50, 100].map((g) => <line key={g} x1="18" x2={W - 18} y1={y(g)} y2={y(g)} stroke={C.piste} strokeDasharray="3 3" />)}
+      {seuil != null && <line x1="18" x2={W - 18} y1={y(seuil)} y2={y(seuil)} stroke={C.rouge} strokeDasharray="4 3" opacity="0.7" />}
       <path d={`${ligne} L${x(points.length - 1)},${y(0)} L${x(0)},${y(0)} Z`} fill="url(#site-gfin)" />
       <path d={ligne} fill="none" stroke={C.teal} strokeWidth="2.2" strokeLinejoin="round" />
       {points.map(([m, v], i) => (
         <g key={m}>
-          <circle cx={x(i)} cy={y(v)} r="3.2" fill="#fff" stroke={C.teal} strokeWidth="2" />
+          <circle cx={x(i)} cy={y(v)} r="3.4" fill="#fff" stroke={couleurs ? couleurs[i] : C.teal} strokeWidth="2.2" />
           <text x={x(i)} y={y(v) - 9} textAnchor="middle" fontSize="10" fontWeight="600" fill={C.ink}>{v}</text>
           <text x={x(i)} y={H - 4} textAnchor="middle" fontSize="10" fill={C.muted}>{m}</text>
         </g>
@@ -133,11 +134,32 @@ function Courbe({ points }) {
   );
 }
 
+const COULEUR_ETAT = { Sain: C.vert, Vigilance: C.ambre, "Alerte précoce": C.rouge };
+const couleurSignal = (s) => (s >= 65 ? C.vert : s >= 45 ? C.or : C.rouge);
+export function ApercuAnalyse() {
+  const a = ANALYSE;
+  return (
+    <CadreApp titre={`Analyse mois par mois — ${a.entreprise}`} icone={Store}>
+      <div className="rounded-xl p-3" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}>
+        <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: C.rouge }}><ShieldAlert size={14} /> Alerte précoce : la situation se dégrade</div>
+        <p className="mt-1 text-xs leading-relaxed">{a.verdict} Au rythme actuel, la trésorerie serait épuisée dans environ {a.tension} jours.</p>
+      </div>
+      <Carte className="p-4"><div className="flex items-baseline justify-between text-xs"><span className="font-semibold">Score mensuel</span><span style={{ color: C.muted }}>seuil d'alerte : 66</span></div><Courbe points={a.mois.map(([m, v]) => [m, v])} couleurs={a.mois.map(([, , e]) => COULEUR_ETAT[e])} seuil={66} /></Carte>
+      <Carte className="overflow-x-auto p-3">
+        <table className="w-full text-[10px]">
+          <thead><tr style={{ color: C.muted }}><th className="pb-1 text-left font-semibold">Signal</th>{a.mois.map(([m]) => <th key={m} className="pb-1 font-semibold">{m}</th>)}</tr></thead>
+          <tbody>{a.signaux.map(([nom, vals]) => (
+            <tr key={nom}><td className="whitespace-nowrap py-0.5 pr-2 font-medium">{nom}</td>{vals.map((v, i) => <td key={i} className="p-0.5"><div className="rounded py-0.5 text-center font-semibold tabular-nums" style={v == null ? { background: C.piste, color: C.muted } : { background: couleurSignal(v) + "1F", color: couleurSignal(v) }}>{v ?? "n.d."}</div></td>)}</tr>))}</tbody>
+        </table>
+      </Carte>
+    </CadreApp>
+  );
+}
+
 export function ApercuFinancement() {
   return (
     <CadreApp titre="Mon financement" icone={Store}>
       <Carte className="p-4 text-center"><div className="text-[11px] font-medium" style={{ color: C.muted }}>Votre situation ce mois-ci</div><div className="mt-0.5 font-serif text-3xl font-semibold" style={{ color: C.vert }}>{PME.sante}</div></Carte>
-      <Carte className="p-4"><div className="text-xs font-semibold">Votre évolution sur 4 mois</div><Courbe points={PME.historique} /></Carte>
       <Carte className="space-y-3 p-4">
         {PME.indicateurs.map(([l, v, note]) => (
           <div key={l}><div className="flex items-center justify-between text-xs"><span className="font-medium">{l}</span><span className="font-semibold" style={{ color: C.vert }}>{v} %</span></div><div className="mt-1"><Barre valeur={v} couleur={C.vert} /></div><div className="mt-0.5 text-[10px]" style={{ color: C.muted }}>{note}</div></div>

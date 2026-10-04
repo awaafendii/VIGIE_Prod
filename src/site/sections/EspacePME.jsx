@@ -1,7 +1,7 @@
-import { HeartPulse, GitCompareArrows, ShieldCheck, Check } from "lucide-react";
+import { HeartPulse, GitCompareArrows, ShieldCheck, Check, Activity } from "lucide-react";
 import { C } from "../theme.js";
 import { Section, EnTete, Reveal, Legende } from "../components/ui.jsx";
-import { ApercuTresorerie, ApercuRapprochement, ApercuFinancement } from "../components/Apercus.jsx";
+import { ApercuTresorerie, ApercuRapprochement, ApercuFinancement, ApercuAnalyse } from "../components/Apercus.jsx";
 
 const FONCTIONS = [
   {
@@ -9,6 +9,12 @@ const FONCTIONS = [
     texte: "Deux chiffres suffisent pour décider : la trésorerie nette réalisée, et la position projetée si tous les impayés se règlent.",
     points: ["Encaissé et décaissé distingués de ce qui reste dû", "Ventilation par canal : virement, espèces, Orange Money, Wave", "Montants en FCFA, affichables en euro, dollar, franc guinéen, naira…"],
     apercu: ApercuTresorerie,
+  },
+  {
+    icone: Activity, nom: "Analyse mois par mois", titre: "Voir venir la dégradation, mois après mois.",
+    texte: "VIGIE lit n'importe quel fichier — feuilles ventes et dépenses, journal de caisse, une feuille par mois —, répertorie tous les mois et recalcule pour chacun la trésorerie, les six signaux et le score.",
+    points: ["Le mois où la baisse commence, et les signaux en cause", "Le mois où l'alerte précoce se serait déclenchée", "Une estimation du délai avant tension de trésorerie"],
+    apercu: ApercuAnalyse, legende: "Fichier d'exemple Quincaillerie Ndar · janv.–juin 2026",
   },
   {
     icone: GitCompareArrows, nom: "Rapprochement", titre: "Retrouvez l'argent que votre comptabilité ignore.",
@@ -19,7 +25,7 @@ const FONCTIONS = [
   {
     icone: ShieldCheck, nom: "Mon financement", titre: "Votre dossier, tel qu'un financeur le lit.",
     texte: "Votre santé financière du mois, son évolution, et les trois indicateurs qui comptent pour un prêteur, chacun expliqué en une ligne.",
-    points: ["Taux d'encaissement, marge nette, poids des charges fixes", "Évolution de votre santé financière sur quatre mois", "Partage du profil avec les institutions de votre choix"],
+    points: ["Taux d'encaissement, marge nette, poids des charges fixes", "Votre score mois après mois, dès que le fichier couvre plusieurs mois", "Partage du profil avec les institutions de votre choix"],
     apercu: ApercuFinancement,
   },
 ];
@@ -29,7 +35,7 @@ export default function EspacePME() {
     <Section id="pme" fond="#fff">
       <EnTete surtitre="Espace PME" titre="Votre trésorerie, enfin lisible." texte="Pas de jargon : l'argent réellement encaissé, ce qui reste à recevoir, et ce qu'un financeur verrait en ouvrant votre dossier." />
       <div className="mt-14 space-y-20 sm:space-y-24">
-        {FONCTIONS.map(({ icone: Ic, nom, titre, texte, points, apercu: Apercu }, i) => (
+        {FONCTIONS.map(({ icone: Ic, nom, titre, texte, points, apercu: Apercu, legende }, i) => (
           <div key={nom} className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
             <Reveal className={i % 2 ? "lg:order-2" : ""}>
               <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold" style={{ background: C.tealTint, color: C.teal }}><Ic size={14} /> {nom}</div>
@@ -45,7 +51,7 @@ export default function EspacePME() {
             </Reveal>
             <Reveal delai={120} className={"mx-auto w-full max-w-lg " + (i % 2 ? "lg:order-1" : "")}>
               <Apercu />
-              <Legende>Fichier d'exemple NPM Multiservices · juin 2026</Legende>
+              <Legende>{legende || "Fichier d'exemple NPM Multiservices · juin 2026"}</Legende>
             </Reveal>
           </div>
         ))}

@@ -22,7 +22,6 @@ export const PME = {
     ["Marge nette", 40, "(ventes − charges) / ventes"],
     ["Poids des charges fixes", 11, "loyer + salaires / ventes"],
   ],
-  historique: [["Mars", 67], ["Avril", 55], ["Mai", 73], ["Juin", 77]],
   correspondance: [["Date", "Date"], ["Montant (encaissé)", "Montant"], ["Canal de paiement", "Mode"], ["Statut", "Statut"], ["Contrepartie", "Client"], ["Libellé", "Produit"], ["Référence unique", "Clé"]],
   rapprochement: {
     kpis: [["Lignes du relevé", "9", "ink"], ["Rapprochées", "88 %", "vert"], ["Non enregistrés", "2", "rouge"], ["À vérifier", "1", "ambre"]],
@@ -43,12 +42,21 @@ export const PORTEFEUILLE = {
   ],
 };
 
-// pondération des signaux du score (identique à ficheData dans src/App.jsx)
+// analyse du fichier d'exemple « Quincaillerie Ndar » (public/exemples), calculée par src/analyse.js
+export const ANALYSE = {
+  entreprise: "Quincaillerie Ndar",
+  mois: [["janv.", 78, "Sain"], ["févr.", 87, "Sain"], ["mars", 86, "Sain"], ["avr.", 66, "Vigilance"], ["mai", 56, "Alerte précoce"], ["juin", 47, "Alerte précoce"]],
+  signaux: [["Jours de tréso.", [76, 81, 88, 76, 68, 45]], ["Encaissements", [84, 92, 79, 71, 52, 54]], ["Tendance CA", [null, 84, 83, 48, 32, 24]], ["Charges fixes", [66, 69, 70, 63, 57, 48]], ["Stabilité", [null, 97, 97, 75, 75, 91]], ["Discipline", [100, 100, 100, 60, 52, 18]]],
+  verdict: "Le score est passé de 87 en février à 47 en juin (−40 points). VIGIE aurait déclenché l'alerte précoce dès mai.",
+  tension: 35,
+};
+
+// pondération et définition des six signaux (identiques à src/analyse.js)
 export const SIGNAUX = [
-  ["Jours de trésorerie", 22, "Combien de jours l'entreprise tient avec son cash disponible."],
-  ["Régularité des encaissements", 20, "Des rentrées d'argent stables plutôt qu'en à-coups."],
-  ["Tendance du CA", 15, "Le chiffre d'affaires progresse, stagne ou recule."],
+  ["Jours de trésorerie", 22, "Combien de jours la trésorerie disponible couvre les dépenses, factures fournisseurs impayées déduites."],
+  ["Régularité des encaissements", 20, "Des rentrées stables d'une semaine à l'autre, et des ventes réellement payées."],
+  ["Tendance du CA", 15, "Les ventes du mois comparées à la moyenne des trois mois précédents."],
   ["Poids des charges fixes", 15, "La part du loyer et des salaires dans les ventes."],
-  ["Stabilité du solde", 14, "L'amplitude des variations du solde de trésorerie."],
-  ["Discipline de trésorerie", 14, "Le respect des échéances fournisseurs et des règlements."],
+  ["Stabilité du solde", 14, "La régularité du solde mensuel sur les trois derniers mois."],
+  ["Discipline de trésorerie", 14, "La part des factures fournisseurs restées impayées."],
 ];

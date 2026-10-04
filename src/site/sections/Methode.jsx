@@ -8,7 +8,7 @@ const TEINTES = ["#0F766E", "#14897F", "#2A9D8F", "#4FB3A6", "#7CC8BD", "#A9DCD3
 export default function Methode() {
   return (
     <Section id="methode">
-      <EnTete surtitre="Méthode" titre="Un score explicable, pas une boîte noire." texte="Le score VIGIE, sur 100, agrège six signaux de trésorerie pondérés. L'institution voit la contribution de chacun ; la PME lit les mêmes données sous forme d'indicateurs simples." />
+      <EnTete surtitre="Méthode" titre="Un score explicable, pas une boîte noire." texte="Le score VIGIE, sur 100, agrège six signaux de trésorerie pondérés, recalculés pour chaque mois du fichier importé. L'institution voit la contribution de chacun ; la PME lit les mêmes données sous forme d'indicateurs simples." />
 
       <div className="mt-10 grid gap-5 lg:grid-cols-[1.35fr_1fr]">
         <Reveal>
@@ -43,6 +43,12 @@ export default function Methode() {
                 <div><dt className="inline font-semibold" style={{ color: C.ink }}>PD</dt> <dd className="inline">· probabilité de défaut, déduite du score et du retard</dd></div>
                 <div><dt className="inline font-semibold" style={{ color: C.ink }}>LGD</dt> <dd className="inline">· perte en cas de défaut, fixée à 45 %</dd></div>
               </dl>
+            </Carte>
+          </Reveal>
+          <Reveal delai={130}>
+            <Carte className="p-6" style={{ borderColor: "#FECACA" }}>
+              <div className="text-sm font-semibold" style={{ color: C.rouge }}>Quand l'alerte précoce se déclenche</div>
+              <p className="mt-2 text-xs leading-relaxed" style={{ color: C.muted }}>Score sous <span className="font-semibold" style={{ color: C.ink }}>66</span>, avec une baisse d'au moins <span className="font-semibold" style={{ color: C.ink }}>11 points</span> en un mois, ou de <span className="font-semibold" style={{ color: C.ink }}>15 points</span> depuis le meilleur des trois mois précédents : la règle du portefeuille, complétée pour repérer aussi les dégradations lentes.</p>
             </Carte>
           </Reveal>
           <Reveal delai={160}>

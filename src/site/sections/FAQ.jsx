@@ -4,6 +4,7 @@ import { Section, EnTete, Reveal } from "../components/ui.jsx";
 
 const QUESTIONS = [
   ["Faut-il un logiciel comptable ?", "Non. Un fichier Excel (.xlsx, .xlsm) ou CSV de ventes et de dépenses suffit. La correspondance des colonnes s'adapte à votre format : vous n'avez rien à ressaisir."],
+  ["Mon fichier couvre plusieurs mois, ou une feuille par mois : que fait VIGIE ?", "VIGIE répertorie tous les mois présents et calcule pour chacun la trésorerie, les six signaux et le score. Il repère le début de la dégradation, les signaux en cause et le mois où l'alerte précoce se déclenche. Feuilles ventes et dépenses, journal de caisse ou une feuille par mois : la structure est reconnue automatiquement."],
   ["Quels moyens de paiement sont reconnus ?", "Virement, espèces, Orange Money, Wave et prélèvement. Les autres libellés sont regroupés sous « Autre » et restent comptabilisés."],
   ["À quoi sert le rapprochement ?", "À comparer votre comptabilité à vos relevés bancaires ou mobile money. Si votre fichier contient déjà un rapprochement, VIGIE l'affiche. Sinon, ajoutez un relevé pour repérer les encaissements jamais enregistrés et les écritures à vérifier."],
   ["Que voit exactement une institution ?", "Avec votre accord : votre score, son évolution, sa décomposition en six signaux et votre position de trésorerie. Sans accord : uniquement l'encours qu'elle vous a consenti."],
