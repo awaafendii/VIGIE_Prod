@@ -364,3 +364,120 @@ export function decalerDates(feuilles, n) {
     }) };
   });
 }
+
+/* ---------- saisons déclarées par la PME (baisses de revenus normales) ----------
+   Une saison couvre des mois de l'année (moisDebut → moisFin, 1 à 12, avec
+   passage d'année possible : ex. décembre → janvier) et annonce une baisse
+   attendue du chiffre d'affaires (baisse = 0 à 1). */
+export const moisEntre = (m, a, b) => (a <= b ? m >= a && m <= b : m >= a || m <= b);
+export function saisonDuMois(cle, saisons = []) {
+  const m = Number(cle.split("-")[1]);
+  return saisons.find((s) => s && s.nom && moisEntre(m, Number(s.moisDebut), Number(s.moisFin))) || null;
+}
+
+/* ---------- prévision de trésorerie : N+1 → N+3 ----------
+   Tendance (régression linéaire simple) sur les encaissements et les
+   décaissements des derniers mois, projetée sur l'horizon, corrigée des
+   saisons déclarées, avec une fourchette qui s'élargit selon la volatilité. */
+function tendanceLineaire(vals) {
+  const n = vals.length;
+  if (n === 0) return { base: 0, pente: 0 };
+  if (n === 1) return { base: vals[0], pente: 0 };
+  const xm = (n - 1) / 2, ym = moyenne(vals);
+  let num = 0, den = 0;
+  vals.forEach((y, x) => { num += (x - xm) * (y - ym); den += (x - xm) ** 2; });
+  const pente = den ? num / den : 0;
+  return { base: ym + pente * (n - 1 - xm), pente }; // base = valeur estimée au dernier mois connu
+}
+export function prevoirTresorerie(mois, saisons = [], horizon = 3) {
+  if (!mois || !mois.length) return null;
+  const der = mois[mois.length - 1];
+  const fen = mois.slice(-Math.min(6, mois.length)); // jusqu'à 6 mois pour estimer la tendance
+  const te = tendanceLineaire(fen.map((m) => m.encaisse));
+  const td = tendanceLineaire(fen.map((m) => m.decaisse));
+  const sigma = mois.length >= 2 ? ecartType(fen.map((m) => m.net)) : Math.abs(der.net) * 0.25;
+  const [y0, m0] = der.cle.split("-").map(Number);
+  const futur = []; let dispo = der.disponible, rupture = null;
+  for (let h = 1; h <= horizon; h++) {
+    const t = y0 * 12 + (m0 - 1) + h, cle = `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+    const saison = saisonDuMois(cle, saisons);
+    let encaisse = Math.max(0, te.base + te.pente * h);
+    if (saison) encaisse *= 1 - Math.max(0, Math.min(1, Number(saison.baisse) || 0));
+    const decaisse = Math.max(0, td.base + td.pente * h);
+    const net = encaisse - decaisse; dispo += net;
+    const marge = sigma * Math.sqrt(h);
+    const pt = { cle, label: libelleMois(cle), horizon: `N+${h}`, encaisse: Math.round(encaisse), decaisse: Math.round(decaisse), net: Math.round(net), disponible: Math.round(dispo), bas: Math.round(dispo - 1.5 * marge), haut: Math.round(dispo + 1.5 * marge), saison: saison ? saison.nom : null, baisse: saison ? Number(saison.baisse) || 0 : 0 };
+    if (!rupture && pt.disponible < 0) rupture = pt;
+    futur.push(pt);
+  }
+  return { futur, rupture, departCle: der.cle, departDisponible: der.disponible, base: { encaisse: Math.round(te.base), decaisse: Math.round(td.base) }, penteEncaisse: te.pente, sigma: Math.round(sigma), nbMois: mois.length };
+}
+
+/* ---------- détection d'anomalies (Niveau 3 : identifier les anomalies) ----------
+   Analyse directe des opérations importées (E = entrées, S = sorties), sans relevé.
+   Trois familles, chacune explicable en clair à la PME :
+   • doublon      : même tiers, même montant, à quelques jours → risque de double paiement / double saisie
+   • inhabituel   : montant très au-dessus de l'habitude d'un tiers récurrent (outlier robuste médiane / MAD)
+   • exceptionnel : grosse opération isolée, sans historique connu pour ce tiers
+   Les familles ne se recoupent pas : une opération déjà signalée (priorité
+   doublon > inhabituel > exceptionnel) n'est pas resignalée plus bas. */
+export const mediane = (a) => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y); const m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
+const madNorm = (a) => { if (a.length < 2) return 0; const m = mediane(a); return 1.4826 * mediane(a.map((x) => Math.abs(x - m))); }; // écart absolu médian ramené à l'échelle d'un écart-type
+const cleTiers = (o) => norm(o.tiers && o.tiers !== "—" ? o.tiers : o.libelle || "");
+const SEVERITE_RANG = { "élevée": 0, "moyenne": 1, "faible": 2 };
+
+export function detecterAnomalies(E = [], S = []) {
+  const anomalies = [];
+  const utilisees = new Set(); // signatures d'opérations déjà signalées, pour ne pas les compter deux fois
+  const sig = (o) => `${o.sens}|${o.date}|${o.montant}|${cleTiers(o)}`;
+  const libOp = (o) => (o.tiers && o.tiers !== "—" ? o.tiers : o.libelle || "opération");
+
+  for (const [sens, ops] of [["ENTREE", E], ["SORTIE", S]]) {
+    const liste = ops.filter((o) => o.montant > 0).slice().sort((a, b) => a.date.localeCompare(b.date));
+
+    // 1) Doublons probables : fenêtre glissante sur des dates proches (liste triée par date)
+    for (let i = 0; i < liste.length; i++) {
+      for (let j = i + 1; j < liste.length; j++) {
+        const a = liste[i], b = liste[j];
+        const dj = ecartJours(depuisISO(b.date), depuisISO(a.date)); // ≥ 0 (b postérieur ou égal)
+        if (dj > 4) break;
+        if (!cleTiers(a) || cleTiers(a) !== cleTiers(b)) continue;
+        if (Math.abs(a.montant - b.montant) > Math.max(1000, a.montant * 0.005)) continue;
+        if (utilisees.has(sig(b))) continue;
+        utilisees.add(sig(a)); utilisees.add(sig(b));
+        anomalies.push({ type: "doublon", sens, severite: sens === "SORTIE" ? "élevée" : "moyenne", date: b.date, montant: b.montant, tiers: libOp(b), ecartJours: dj, ops: [a, b] });
+      }
+    }
+
+    // 2) Montant inhabituel pour un tiers récurrent (au moins 5 opérations)
+    const parTiers = {};
+    liste.forEach((o) => { const k = cleTiers(o); if (!k) return; (parTiers[k] = parTiers[k] || []).push(o); });
+    for (const grp of Object.values(parTiers)) {
+      if (grp.length < 5) continue;
+      const montants = grp.map((o) => o.montant), med = mediane(montants), sigma = madNorm(montants);
+      const seuil = sigma > 0 ? med + 3 * sigma : med * 2.5;
+      for (const o of grp) {
+        if (o.montant <= seuil || o.montant < med * 1.5 || utilisees.has(sig(o))) continue;
+        utilisees.add(sig(o));
+        anomalies.push({ type: "inhabituel", sens, severite: "moyenne", date: o.date, montant: o.montant, tiers: libOp(o), habituel: Math.round(med), facteur: med > 0 ? o.montant / med : 0, ops: [o] });
+      }
+    }
+
+    // 3) Grosse opération isolée (tiers sans historique) — surtout pour les dépenses
+    const medGlobal = mediane(liste.map((o) => o.montant));
+    if (medGlobal > 0) {
+      for (const o of liste) {
+        const historique = (parTiers[cleTiers(o)] || []).length;
+        if (historique >= 5 || o.montant < medGlobal * 6 || utilisees.has(sig(o))) continue;
+        utilisees.add(sig(o));
+        anomalies.push({ type: "exceptionnel", sens, severite: sens === "SORTIE" ? "moyenne" : "faible", date: o.date, montant: o.montant, tiers: libOp(o), habituel: Math.round(medGlobal), facteur: o.montant / medGlobal, ops: [o] });
+      }
+    }
+  }
+
+  anomalies.sort((a, b) => (SEVERITE_RANG[a.severite] - SEVERITE_RANG[b.severite]) || (b.montant - a.montant) || a.date.localeCompare(b.date));
+  anomalies.forEach((a, i) => (a.id = i + 1));
+  const parType = anomalies.reduce((o, a) => ((o[a.type] = (o[a.type] || 0) + 1), o), {});
+  const montantARisque = anomalies.filter((a) => a.type === "doublon" && a.sens === "SORTIE").reduce((x, a) => x + a.montant, 0);
+  return { anomalies, parType, total: anomalies.length, montantARisque, graves: anomalies.filter((a) => a.severite === "élevée").length };
+}
