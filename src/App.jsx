@@ -1,5 +1,14 @@
-import React, { useState, useMemo, useCallback, useEffect, createContext, useContext } from "react";
-import { lireClasseur, rolesAuto, autoMap, CHAMPS_ROLE, manquants, extraireFeuille, analyserMois, diagnostiquer, libelleMois, finDuMois, nomDepuisFichier, parseMontant, SEUIL_ALERTE, CHUTE_ALERTE, CHUTE_PIC, situerDansLeTemps, decalerDates, debutJour, ajouterJoursA, ecartJours, relatif, SEUILS_FRAICHEUR } from "./analyse.js";
+import React, { useState, useMemo, useCallback, useEffect, useRef, createContext, useContext } from "react";
+import { lireClasseur, rolesAuto, autoMap, CHAMPS_ROLE, manquants, extraireFeuille, analyserMois, diagnostiquer, libelleMois, finDuMois, nomDepuisFichier, parseMontant, SEUIL_ALERTE, CHUTE_ALERTE, CHUTE_PIC, situerDansLeTemps, decalerDates, debutJour, ajouterJoursA, ecartJours, relatif, SEUILS_FRAICHEUR, prevoirTresorerie, saisonDuMois, detecterAnomalies } from "./analyse.js";
+import { exporterAnalysePME, exporterPortefeuille } from "./export.js";
+import { usePersistant, ORG_DEFAUT, redimensionnerImage, MOIS_NOMS, SAISONS_PRESETS, saisonVide, FOURNISSEURS, trouverFournisseur } from "./reglages.js";
+import { listerConnexions, demarrerConnexion, recupererReleve, deconnecterSource, lireRetourOAuth, messageErreur, ErreurBanque } from "./banque.js";
+import { empreinteFichier, enregistrerImport, lireTransactions } from "./finance.js";
+import { authDisponible } from "./auth.js";
+import { listerInstitutions, listerAutorisations, accorderAcces, revoquerAcces, portefeuilleInstitution, pmeAutorisee, SCOPES as SCOPES_PARTAGE, SCOPE_LABEL } from "./consent.js";
+import { listerIntegrations, enregistrerIntegration, revoquerIntegration } from "./integrations.js";
+import { listerAlertes, acquitterAlerte } from "./alerts.js";
+import { lireRapprochement, enregistrerVersement } from "./settlements.js";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Cell, ComposedChart, Line,
@@ -10,6 +19,7 @@ import {
   RefreshCw, ChevronRight, Landmark, Store, Smartphone, Banknote, CircleDollarSign,
   ShieldAlert, Layers, Building2, Search, Sparkles, HeartPulse, GitCompareArrows, Plus, BadgeCheck, Ban, Coins,
   Bell, Send, MessageSquare, CalendarClock, ClipboardList, RotateCcw, CheckCheck, Lightbulb, ChevronDown, X, Activity, Download, CalendarDays,
+  Settings, Image as ImageIcon, Trash2, PlugZap, LineChart, Snowflake, FileDown,
 } from "lucide-react";
 
 /* ============================================================
@@ -233,7 +243,7 @@ function Vide({ icone: Ic, titre, texte, action, onAction }) {
 }
 
 /* ============================================================ APP ============================================================ */
-export default function App() {
+export default function App({ session } = {}) {
   const [espace, setEspace] = useState("pme");
   const [pmeVue, setPmeVue] = useState("import");
   const [instVue, setInstVue] = useState("board");
@@ -263,11 +273,32 @@ export default function App() {
   const formats = useMemo(() => formateurs(devise), [devise]);
   const [notifs, setNotifs] = useState([]); // recommandations envoyées, la plus récente en premier
   const [modeles, setModeles] = useState({}); // modèles modifiés, par institution
+  const [branding, setBranding] = usePersistant("vigie.branding", ORG_DEFAUT); // nom + logo, PME et institutions
+  const [saisons, setSaisons] = usePersistant("vigie.saisons", []); // saisons de baisse d'activité déclarées par la PME
+  const [connecteurs, setConnecteurs] = useState([]); // sources bancaires / mobile money connectées (lues depuis le backend)
+  const [banqueEtat, setBanqueEtat] = useState({ dispo: null, enCours: null, erreur: null }); // dispo: backend configuré ? ; enCours: id en synchro ; erreur: {code,message}
+  const [vueReglages, setVueReglages] = useState(false); // écran Réglages ouvert depuis l'en-tête
+
+  /* ---------- Persistance (Phase 2) ----------
+     Active UNIQUEMENT si l'utilisateur est authentifié et membre d'une
+     organisation de type PME. Sans Supabase (mode démo), session est
+     absente → persistance = false → tout ce bloc reste inerte. */
+  const orgPME = useMemo(() => (session?.organisations || []).find((o) => o.type === "PME") || null, [session]);
+  const persistance = !!(authDisponible && orgPME);
+  // Compte réel (session authentifiée) vs démonstration. L'espace institution
+  // bascule sur les données RÉELLES (consentements) dès qu'une org INSTITUTION existe.
+  const compteReel = !!(authDisponible && session?.utilisateur);
+  const orgINST = useMemo(() => (session?.organisations || []).find((o) => o.type === "INSTITUTION") || null, [session]);
+  const instReel = compteReel && !!orgINST;
+  const [empreinte, setEmpreinte] = useState(null);      // SHA-256 du dernier fichier importé (null = exemple ou aucun)
+  const [persistEtat, setPersistEtat] = useState(null);  // retour discret : { etat, accepted, duplicates }
+  const envoiRef = useRef(null);                          // garde-fou : un même import n'est envoyé qu'une fois
 
   const chargerSource = useCallback((src, solde = null) => {
     const r = rolesAuto(src.feuilles);
     setSource(src); setRoles(r); setMaps(Object.fromEntries(src.feuilles.map((f) => [f.nom, autoMap(f.colonnes, r[f.nom])])));
-    setSoldeSaisi(solde); setErreurImport(null); setReleveAjoute(null); setImpEtape(1);
+    setSoldeSaisi(solde); setErreurImport(null); setReleveAjoute(null); setConnecteurs([]); setImpEtape(1);
+    setEmpreinte(null); setPersistEtat(null); envoiRef.current = null; // nouvel import : on repart propre (un exemple reste non persisté)
   }, []);
   const chargerExemple = useCallback((avecRapprochement) => {
     const feuille = (nom, lignes) => ({ nom, colonnes: Object.keys(lignes[0]), lignes: lignes.map((l, i) => ({ ...l, __ligne: i + 2 })) });
@@ -275,13 +306,19 @@ export default function App() {
   }, [chargerSource]);
   const chargerFichier = useCallback(async (file, options = {}) => {
     try {
-      const lu = lireClasseur(await file.arrayBuffer(), file.name);
+      // Garde-fous : taille et extension (évite de charger un binaire hostile ou un fichier géant en mémoire)
+      const TAILLE_MAX = 15 * 1024 * 1024; // 15 Mo
+      if (file.size > TAILLE_MAX) { setErreurImport(`« ${file.name} » dépasse 15 Mo. Exportez une période plus courte ou un fichier allégé.`); return; }
+      if (!/\.(xlsx|xlsm|xls|csv|txt)$/i.test(file.name)) { setErreurImport(`Format non pris en charge pour « ${file.name} » : attendez un fichier .xlsx, .xls, .csv ou .txt.`); return; }
+      const buf = await file.arrayBuffer();
+      const lu = lireClasseur(buf, file.name);
       const feuilles = decalerDates(lu.feuilles, options.decalerMois || 0), nomsFeuilles = lu.nomsFeuilles;
       if (!feuilles.length) { setErreurImport(`Aucune feuille exploitable dans « ${file.name} » : VIGIE cherche une ligne d'en-tête contenant une colonne de date (Date, Jour, Date opération…).`); return; }
       const aRappro = nomsFeuilles.some((n) => /rappro|relev|lettr/i.test(n));
       chargerSource({ fichier: options.decalerMois ? `${file.name} (dates recalées sur les 4 derniers mois)` : file.name, entreprise: options.entreprise || nomDepuisFichier(file.name), feuilles, recon: aRappro ? { comptes: [], lettrage: [], detecteSansDetail: true } : null }, options.soldeInitial ?? null);
+      if (persistance) { try { setEmpreinte(await empreinteFichier(buf)); } catch { /* empreinte indisponible : l'import marchera, sans persistance */ } }
     } catch (e) { setErreurImport(`Lecture impossible de « ${file.name} » : fichier protégé, endommagé ou d'un format non pris en charge.`); }
-  }, [chargerSource]);
+  }, [chargerSource, persistance]);
   const chargerExempleMensuel = useCallback(async () => {
     const ex = EXEMPLES_FICHIERS[0];
     try {
@@ -294,6 +331,16 @@ export default function App() {
   // lecture de toutes les feuilles retenues, puis analyse mois par mois
   const resultat = useMemo(() => {
     if (!source) return null;
+    // Données persistées (restaurées depuis le serveur) : déjà normalisées, on
+    // court-circuite l'extraction et on branche directement le moteur d'analyse.
+    if (source.__persistees) {
+      const ops = source.__persistees;
+      const entrees = ops.filter((o) => o.sens === "ENTREE"), sorties = ops.filter((o) => o.sens === "SORTIE");
+      const solde = soldeSaisi ?? 0;
+      const mois = analyserMois(entrees, sorties, solde);
+      const diag = diagnostiquer(mois);
+      return { entrees, sorties, rejets: [], nbLignes: ops.length, nbValides: ops.length, mois, diag, profil: diag ? diag.dernier.profil : null, moisCourant: diag ? diag.dernier.cle : null, soldeDetecte: null, soldeSaisi, solde, anomalies: detecterAnomalies(entrees, sorties) };
+    }
     const actives = source.feuilles.filter((f) => roles[f.nom] && roles[f.nom] !== "ignorer" && maps[f.nom] && !manquants(roles[f.nom], maps[f.nom]).length);
     const lus = actives.map((f) => ({ f, ...extraireFeuille(f, roles[f.nom], maps[f.nom]) }));
     const ops = lus.flatMap((x) => x.valides);
@@ -304,13 +351,16 @@ export default function App() {
     const entrees = ops.filter((o) => o.sens === "ENTREE"), sorties = ops.filter((o) => o.sens === "SORTIE");
     const mois = analyserMois(entrees, sorties, solde);
     const diag = diagnostiquer(mois);
-    return { entrees, sorties, rejets: lus.flatMap((x) => x.rejets), nbLignes: actives.reduce((a, f) => a + f.lignes.length, 0), nbValides: ops.length, mois, diag, profil: diag ? diag.dernier.profil : null, moisCourant: diag ? diag.dernier.cle : null, soldeDetecte, soldeSaisi, solde };
+    return { entrees, sorties, rejets: lus.flatMap((x) => x.rejets), nbLignes: actives.reduce((a, f) => a + f.lignes.length, 0), nbValides: ops.length, mois, diag, profil: diag ? diag.dernier.profil : null, moisCourant: diag ? diag.dernier.cle : null, soldeDetecte, soldeSaisi, solde, anomalies: detecterAnomalies(entrees, sorties) };
   }, [source, roles, maps, soldeSaisi]);
 
   const hasReleve = !!source?.recon;
   const profil = resultat?.profil || null;
-  const nomFocus = source ? source.entreprise.trim() || "Ma PME" : "";
-  const instNom = INSTITUTIONS.find((i) => i.id === instActive).nom;
+  const nomFocus = (branding.pme.nom || "").trim() || (source ? source.entreprise.trim() || "Ma PME" : "");
+  const instNomBase = INSTITUTIONS.find((i) => i.id === instActive).nom;
+  const instNom = ((branding.inst[instActive] || {}).nom || "").trim() || instNomBase;
+  const logoPME = (branding.pme.logo || "").trim();
+  const logoInst = ((branding.inst[instActive] || {}).logo || "").trim();
   const temps = useMemo(() => (resultat?.diag ? situerDansLeTemps(resultat.mois, resultat.diag, aujourdhui) : null), [resultat, aujourdhui]);
   const vedette = useMemo(() => (resultat?.diag ? construireVedette(resultat, nomFocus, releveAjoute, temps) : null), [resultat, nomFocus, releveAjoute, temps]);
   // portefeuille simulé : alertes et tensions datées à partir d'aujourd'hui
@@ -326,7 +376,116 @@ export default function App() {
   const ecarterPME = (id) => setRejetes((v) => ({ ...v, [instActive]: [...(v[instActive] || []), id] }));
 
   const importe = impEtape >= 3 && !!profil;
-  const ajouterReleve = () => { const E = resultat.entrees.filter((e) => e.date.startsWith(resultat.moisCourant)); setReleveAjoute(rapprocher(E, genererReleveExemple(E, resultat.moisCourant))); };
+  // Aperçu pédagogique du rapprochement à partir d'un relevé d'exemple reconstitué
+  // (explicitement étiqueté « données simulées » dans l'écran — pas un connecteur réel).
+  const voirExempleReleve = () => { const E = resultat.entrees.filter((e) => e.date.startsWith(resultat.moisCourant)); setReleveAjoute(rapprocher(E, genererReleveExemple(E, resultat.moisCourant))); };
+
+  /* ---------- Hydratation : zéro perte à l'actualisation ----------
+     Au montage (authentifié + org PME), on restaure les transactions
+     déjà persistées. Ne s'exécute qu'une fois par organisation et
+     n'écrase jamais un import en cours (garde `!source`). */
+  useEffect(() => {
+    if (!persistance || source) return;
+    let vivant = true;
+    (async () => {
+      try {
+        const { transactions } = await lireTransactions(orgPME.id);
+        if (!vivant || !transactions?.length) return;
+        setSource({ __persistees: transactions, fichier: "Données enregistrées", entreprise: orgPME.nom || "Ma PME", feuilles: [], recon: null });
+        setImpEtape(3);
+        setPersistEtat({ etat: "hydrate", accepted: transactions.length });
+      } catch { /* silencieux : l'utilisateur pourra importer manuellement */ }
+    })();
+    return () => { vivant = false; };
+  }, [persistance, orgPME]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---------- Sauvegarde : un import réel validé est persisté une fois ----------
+     Condition : vrai fichier (empreinte présente), parcours allé à son terme
+     (étape 3 + profil calculé). Les exemples (sans empreinte) ne sont jamais
+     persistés → l'espace réel d'une PME n'est pas pollué par la démo. */
+  useEffect(() => {
+    if (!persistance || !source || source.__persistees) return;
+    if (impEtape < 3 || !resultat?.profil || !empreinte) return;
+    if (envoiRef.current === source) return;
+    envoiRef.current = source;
+    const ops = [...resultat.entrees, ...resultat.sorties];
+    const dates = ops.map((o) => o.date).filter(Boolean).sort();
+    enregistrerImport({ orgId: orgPME.id, filename: source.fichier || "import.xlsx", fileHash: empreinte, operations: ops, periodStart: dates[0], periodEnd: dates[dates.length - 1] })
+      .then((r) => setPersistEtat({ etat: r.deja ? "inchange" : "enregistre", accepted: r.accepted, duplicates: r.duplicates }))
+      .catch(() => { envoiRef.current = null; setPersistEtat({ etat: "erreur" }); });
+  }, [persistance, source, impEtape, resultat, empreinte, orgPME]);
+
+  /* ---------- connecteurs RÉELS : la lecture passe par le backend ----------
+     Aucun secret dans le navigateur. La connexion ouvre le consentement
+     hébergé du fournisseur (OAuth) ; au retour, VIGIE récupère les vraies
+     transactions du mois et les rapproche de la comptabilité. */
+  const encaissementsMois = useCallback(
+    () => (resultat ? resultat.entrees.filter((e) => e.date.startsWith(resultat.moisCourant)) : []),
+    [resultat]
+  );
+
+  const rafraichirConnexions = useCallback(async () => {
+    try {
+      const liste = await listerConnexions();
+      setConnecteurs(liste);
+      setBanqueEtat((s) => ({ ...s, dispo: true }));
+    } catch (e) {
+      if (e instanceof ErreurBanque && e.code === "non_configure") setBanqueEtat((s) => ({ ...s, dispo: false }));
+      // autre erreur (réseau, auth) : on ne casse pas l'écran, l'utilisateur pourra réessayer
+    }
+  }, []);
+
+  // synchronise une source déjà connectée : récupère le vrai relevé du mois et rapproche
+  const syncApi = useCallback(async (fournisseurId) => {
+    if (!resultat) return;
+    const f = trouverFournisseur(fournisseurId);
+    setBanqueEtat((s) => ({ ...s, enCours: fournisseurId, erreur: null }));
+    try {
+      const releve = await recupererReleve(fournisseurId, resultat.moisCourant, f?.canal);
+      setReleveAjoute(rapprocher(encaissementsMois(), releve));
+      setConnecteurs((cs) => {
+        const le = new Date().toISOString();
+        const autres = cs.filter((c) => c.fournisseur !== fournisseurId);
+        return [{ fournisseur: fournisseurId, nb: releve.length, sync: le, depuis: (cs.find((c) => c.fournisseur === fournisseurId)?.depuis) || le }, ...autres];
+      });
+      setBanqueEtat((s) => ({ ...s, enCours: null, dispo: true }));
+    } catch (e) {
+      const code = e instanceof ErreurBanque ? e.code : "erreur";
+      setBanqueEtat((s) => ({ ...s, enCours: null, dispo: code === "non_configure" ? false : s.dispo, erreur: { code, message: e.message || messageErreur(code) } }));
+    }
+  }, [resultat, encaissementsMois]);
+
+  // démarre une connexion : soit redirection vers le consentement (OAuth),
+  // soit, pour un compte marchand (CinetPay), synchronisation directe.
+  const connecterApi = useCallback(async (fournisseurId) => {
+    setBanqueEtat((s) => ({ ...s, enCours: fournisseurId, erreur: null }));
+    try {
+      const r = await demarrerConnexion(fournisseurId); // retour = page courante
+      if (r.mode === "direct") { setBanqueEtat((s) => ({ ...s, enCours: null })); return syncApi(fournisseurId); }
+      window.location.assign(r.url); // quitte l'app vers la page de consentement sécurisée
+    } catch (e) {
+      const code = e instanceof ErreurBanque ? e.code : "erreur";
+      setBanqueEtat((s) => ({ ...s, enCours: null, dispo: code === "non_configure" ? false : s.dispo, erreur: { code, message: e.message || messageErreur(code) } }));
+    }
+  }, [syncApi]);
+
+  const resyncApi = useCallback((fournisseurId) => { syncApi(fournisseurId); }, [syncApi]);
+  const deconnecterApi = useCallback(async (fournisseurId) => {
+    setConnecteurs((cs) => cs.filter((c) => c.fournisseur !== fournisseurId)); // retrait optimiste
+    try { await deconnecterSource(fournisseurId); } catch { rafraichirConnexions(); }
+  }, [rafraichirConnexions]);
+
+  // au premier affichage de l'app : lire les sources déjà connectées, et traiter un éventuel retour OAuth
+  const retourTraite = useRef(false);
+  useEffect(() => {
+    rafraichirConnexions();
+    if (retourTraite.current) return;
+    const retour = lireRetourOAuth();
+    if (!retour) return;
+    retourTraite.current = true;
+    if (retour.statut === "ok" && retour.fournisseur) { syncApi(retour.fournisseur); }
+    else if (retour.statut !== "ok") setBanqueEtat((s) => ({ ...s, erreur: { code: "refus", message: messageErreur("refus") } }));
+  }, [rafraichirConnexions, syncApi]);
 
   // recommandations : envoi par l'institution, lecture et réponse par la PME
   const inst = INSTITUTIONS.find((i) => i.id === instActive);
@@ -353,17 +512,20 @@ export default function App() {
       <header style={{ background: C.ink }} className="px-4 py-3 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-white">
-            <div className="grid h-9 w-9 place-items-center rounded-lg" style={{ background: C.teal }}>{espace === "pme" ? <Store size={18} /> : <Landmark size={18} />}</div>
-            <div><div className="text-[15px] font-bold leading-tight">{espace === "pme" ? (importe ? nomFocus : "Espace PME") : instNom}</div>
+            {(espace === "pme" ? logoPME : logoInst)
+              ? <img src={espace === "pme" ? logoPME : logoInst} alt="" className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain" />
+              : <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ background: C.teal }}>{espace === "pme" ? <Store size={18} /> : <Landmark size={18} />}</div>}
+            <div><div className="text-[15px] font-bold leading-tight">{espace === "pme" ? (importe ? nomFocus : ((branding.pme.nom || "").trim() || "Espace PME")) : (instReel ? orgINST.nom : compteReel ? "Espace institution" : instNom)}</div>
               <div className="text-[11px]" style={{ color: "#9AA7B8" }}>{espace === "pme" ? "Trésorerie & financement" : "VIGIE — risque de portefeuille"}</div></div>
-            {espace === "inst" && (<select value={instActive} onChange={(e) => { setInstActive(e.target.value); setSel(null); }} className="ml-1 rounded-md px-2 py-1 text-xs font-semibold text-white outline-none" style={{ background: "#1C2E44" }}>{INSTITUTIONS.map((i) => <option key={i.id} value={i.id} style={{ color: C.ink }}>{i.nom}</option>)}</select>)}
+            {espace === "inst" && !compteReel && (<select value={instActive} onChange={(e) => { setInstActive(e.target.value); setSel(null); }} className="ml-1 rounded-md px-2 py-1 text-xs font-semibold text-white outline-none" style={{ background: "#1C2E44" }}>{INSTITUTIONS.map((i) => <option key={i.id} value={i.id} style={{ color: C.ink }}>{i.nom}</option>)}</select>)}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setVueReglages((v) => !v)} aria-pressed={vueReglages} aria-label="Réglages" title="Réglages : nom, logo, saisons de baisse" className="grid h-8 w-8 place-items-center rounded-lg" style={{ background: vueReglages ? "#fff" : "#1C2E44" }}><Settings size={15} style={{ color: vueReglages ? C.ink : "#9AA7B8" }} /></button>
           <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs" style={{ background: "#1C2E44", color: "#9AA7B8" }} title="Date et heure actuelles : alertes, prévisions et contrôles sont calculés par rapport à elles">
             <CalendarDays size={14} /><span className="font-semibold text-white">{maintenant.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</span><span className="hidden sm:inline">· {maintenant.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
           </div>
           {espace === "pme" && importe && (
-            <button onClick={() => setPmeVue("recommandations")} aria-label={nonLues ? `${nonLues} recommandation(s) non lue(s)` : "Recommandations"} className="relative grid h-8 w-8 place-items-center rounded-lg" style={{ background: "#1C2E44" }}>
+            <button onClick={() => { setVueReglages(false); setPmeVue("recommandations"); }} aria-label={nonLues ? `${nonLues} recommandation(s) non lue(s)` : "Recommandations"} className="relative grid h-8 w-8 place-items-center rounded-lg" style={{ background: "#1C2E44" }}>
               <Bell size={15} style={{ color: nonLues ? "#fff" : "#9AA7B8" }} />
               {nonLues > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full px-1 text-[10px] font-bold text-white" style={{ background: C.rouge }}>{nonLues}</span>}
             </button>
@@ -376,26 +538,27 @@ export default function App() {
           </label>
           <div className="flex rounded-lg p-1" style={{ background: "#1C2E44" }}>
             {[["pme", "Espace PME", Store], ["inst", "Espace Institution", Landmark]].map(([id, lbl, Ic]) => (
-              <button key={id} onClick={() => { setEspace(id); setSel(null); }} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold" style={{ background: espace === id ? "#fff" : "transparent", color: espace === id ? C.ink : "#9AA7B8" }}><Ic size={14} /><span className="hidden sm:inline">{lbl}</span></button>
+              <button key={id} onClick={() => { setEspace(id); setSel(null); setVueReglages(false); }} className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold" style={{ background: espace === id ? "#fff" : "transparent", color: espace === id ? C.ink : "#9AA7B8" }}><Ic size={14} /><span className="hidden sm:inline">{lbl}</span></button>
             ))}
           </div>
           </div>
         </div>
       </header>
 
-      {!selE && (
+      {!selE && !(espace === "inst" && compteReel) && (
         <nav className="sticky top-0 z-10 border-b bg-white/90 backdrop-blur" style={{ borderColor: C.hairline }}>
           <div className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-3 sm:px-8">
             {(espace === "pme"
-              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["analyse", "Analyse", Activity], ["rapprochement", "Rapprochement", GitCompareArrows], ["financement", "Mon financement", ShieldCheck], ["recommandations", "Recommandations", Bell]]
+              ? [["import", "Import", UploadCloud], ["tresorerie", "Ma trésorerie", HeartPulse], ["analyse", "Analyse", Activity], ["rapprochement", "Rapprochement", GitCompareArrows], ["anomalies", "Anomalies", Search], ["financement", "Mon financement", ShieldCheck], ["recommandations", "Recommandations", Bell], ...(compteReel && orgPME ? [["partages", "Partages", Link2], ["connecteurs", "Connecteurs", Smartphone]] : [])]
               : [["board", "Portefeuille", Layers], ["valider", "À valider", BadgeCheck], ["watch", "Alerte précoce", ShieldAlert], ["liste", "Emprunteurs", Building2], ["suivi", "Suivi", Send]]
             ).map(([id, lbl, Ic]) => { const actif = (espace === "pme" ? pmeVue : instVue) === id; return (
-              <button key={id} onClick={() => espace === "pme" ? setPmeVue(id) : setInstVue(id)} className="flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium" style={{ color: actif ? C.ink : C.muted, borderBottom: `2px solid ${actif ? C.teal : "transparent"}` }}>
+              <button key={id} onClick={() => { setVueReglages(false); espace === "pme" ? setPmeVue(id) : setInstVue(id); }} className="flex items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium" style={{ color: actif && !vueReglages ? C.ink : C.muted, borderBottom: `2px solid ${actif && !vueReglages ? C.teal : "transparent"}` }}>
                 <Ic size={16} /> {lbl}
                 {id === "watch" && agg.watchlist.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{agg.watchlist.length}</span>}
                 {id === "import" && importe && <CheckCircle2 size={13} style={{ color: C.vert }} />}
                 {id === "valider" && candidats.length > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{candidats.length}</span>}
                 {id === "analyse" && importe && resultat.diag.niveau !== "Sain" && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: resultat.diag.niveau === "Alerte précoce" ? C.rouge : C.ambre }}>!</span>}
+                {id === "anomalies" && importe && resultat.anomalies.total > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: resultat.anomalies.graves > 0 ? C.rouge : C.ambre }}>{resultat.anomalies.total}</span>}
                 {id === "recommandations" && nonLues > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.rouge }}>{nonLues}</span>}
                 {id === "suivi" && reponsesAttente > 0 && <span className="rounded-full px-1.5 text-[11px] font-bold text-white" style={{ background: C.ambre }}>{reponsesAttente}</span>}
               </button>); })}
@@ -404,34 +567,617 @@ export default function App() {
       )}
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-8">
+        {espace === "pme" && compteReel && orgPME && !vueReglages && <BandeauAlertesPME org={orgPME} />}
         {devise !== "XOF" && (
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#F0F5F4", border: `1px solid ${C.hairline}`, color: C.muted }}>
             <span className="flex flex-wrap items-center gap-1.5"><Coins size={13} style={{ color: C.teal }} /> Montants affichés en <span className="font-semibold" style={{ color: C.ink }}>{DEVISES[devise].nom} ({DEVISES[devise].sym})</span> · {texteTaux(devise)} · {DEVISES[devise].fixe ? "parité fixe" : `taux indicatif du ${TAUX_DATE}`}</span>
             <button onClick={() => setDevise("XOF")} className="font-semibold" style={{ color: C.teal }}>Revenir au FCFA</button>
           </div>
         )}
-        {espace === "pme" ? (
-          pmeVue === "import" ? <Import etape={impEtape} setEtape={setImpEtape} source={source} roles={roles} setRoles={setRoles} maps={maps} setMaps={setMaps} resultat={resultat} soldeSaisi={soldeSaisi} setSoldeSaisi={setSoldeSaisi} setEntreprise={(nom) => setSource({ ...source, entreprise: nom })} erreur={erreurImport} onExemple={chargerExemple} onExempleMensuel={chargerExempleMensuel} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); setErreurImport(null); }} goVue={setPmeVue} />
+        {vueReglages ? <Reglages espace={espace} branding={branding} setBranding={setBranding} instActive={instActive} instNomBase={instNomBase} saisons={saisons} setSaisons={setSaisons} onClose={() => setVueReglages(false)} />
+          : espace === "pme" ? (
+          pmeVue === "partages" ? (compteReel && orgPME ? <Partages org={orgPME} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+          : pmeVue === "connecteurs" ? (compteReel && orgPME ? <Connecteurs org={orgPME} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+          : pmeVue === "import" ? <Import etape={impEtape} setEtape={setImpEtape} source={source} roles={roles} setRoles={setRoles} maps={maps} setMaps={setMaps} resultat={resultat} soldeSaisi={soldeSaisi} setSoldeSaisi={setSoldeSaisi} setEntreprise={(nom) => setSource({ ...source, entreprise: nom })} erreur={erreurImport} onExemple={chargerExemple} onExempleMensuel={chargerExempleMensuel} onFichier={chargerFichier} onReset={() => { setSource(null); setImpEtape(0); setReleveAjoute(null); setErreurImport(null); }} goVue={setPmeVue} />
             : pmeVue === "tresorerie" ? (importe ? <Tresorerie profil={profil} moisCourant={resultat.moisCourant} nbMois={resultat.mois.length} temps={temps} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-            : pmeVue === "analyse" ? (importe ? <AnalyseMensuelle resultat={resultat} entreprise={nomFocus} temps={temps} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-              : pmeVue === "rapprochement" ? (importe ? <Rapprochement hasReleve={hasReleve} recon={source.recon} releveAjoute={releveAjoute} onAjouter={ajouterReleve} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+            : pmeVue === "analyse" ? (importe ? <AnalyseMensuelle resultat={resultat} entreprise={nomFocus} temps={temps} saisons={saisons} onReglages={() => setVueReglages(true)} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+              : pmeVue === "rapprochement" ? (importe ? <Rapprochement hasReleve={hasReleve} recon={source.recon} releveAjoute={releveAjoute} onExempleReleve={voirExempleReleve} moisCourant={resultat.moisCourant} connecteurs={connecteurs} banqueEtat={banqueEtat} onConnecter={connecterApi} onSync={resyncApi} onDeconnecter={deconnecterApi} /> : <PromptImport goImport={() => setPmeVue("import")} />)
+              : pmeVue === "anomalies" ? (importe ? <Anomalies resultat={resultat} /> : <PromptImport goImport={() => setPmeVue("import")} />)
               : pmeVue === "recommandations" ? (importe ? <Recommandations notifs={notifsPME} onLire={lireNotif} onRepondre={repondreNotif} onCocher={cocherAction} goVue={setPmeVue} /> : <PromptImport goImport={() => setPmeVue("import")} />)
                 : (importe ? <Financement profil={profil} histo={vedette.histo} goVue={setPmeVue} institutions={INSTITUTIONS} partages={partages} setPartages={setPartages} valides={valides} /> : <PromptImport goImport={() => setPmeVue("import")} />)
-        ) : selE ? <Fiche e={selE} partageActive={!selE.isFocus || partageActive} estCandidat={selE.isFocus && candidats.length > 0} onValider={() => { validerPME(0); setSel(null); setInstVue("liste"); }} onEcarter={() => { ecarterPME(0); setSel(null); }} onBack={() => setSel(null)} inst={inst} modeles={modelesInst} notifs={notifsInst.filter((n) => n.empId === selE.id)} onEnvoyer={(c) => envoyerNotif(selE, c)} />
+        ) : instReel ? <EspaceInstitutionReel org={orgINST} />
+          : compteReel ? <InstitutionVide onPME={() => setEspace("pme")} />
+          : selE ? <Fiche e={selE} partageActive={!selE.isFocus || partageActive} estCandidat={selE.isFocus && candidats.length > 0} onValider={() => { validerPME(0); setSel(null); setInstVue("liste"); }} onEcarter={() => { ecarterPME(0); setSel(null); }} onBack={() => setSel(null)} inst={inst} modeles={modelesInst} notifs={notifsInst.filter((n) => n.empId === selE.id)} onEnvoyer={(c) => envoyerNotif(selE, c)} />
           : instVue === "board" ? <Board agg={agg} setVue={setInstVue} onOpen={setSel} candidatsCount={candidats.length} instNom={instNom} notifsParEmp={notifsParEmp} />
             : instVue === "valider" ? <AValider candidats={candidats} onOpen={setSel} onValider={(id) => validerPME(id)} onEcarter={(id) => ecarterPME(id)} instNom={instNom} />
-            : instVue === "watch" ? <Watch agg={agg} onOpen={setSel} notifsParEmp={notifsParEmp} />
+            : instVue === "watch" ? <Watch agg={agg} onOpen={setSel} notifsParEmp={notifsParEmp} instNom={instNom} />
             : instVue === "suivi" ? <Suivi notifs={notifsInst} instNom={instNom} modeles={modelesInst} modelesPerso={modeles[instActive] || {}} setModele={setModele} resetModele={resetModele} onCloturer={cloturerNotif} onOpen={setSel} setVue={setInstVue} />
-              : <Liste portefeuille={portefeuille} onOpen={setSel} />}
+              : <Liste portefeuille={portefeuille} onOpen={setSel} agg={agg} instNom={instNom} />}
       </main>
 
+      {persistEtat && <PersistBadge etat={persistEtat} />}
     </div>
     </AujourdhuiContext.Provider>
     </DeviseContext.Provider>
   );
 }
 
+/* Indicateur discret de persistance (visible seulement quand l'auth est active). */
+function PersistBadge({ etat }) {
+  const map = {
+    hydrate: { t: "Données restaurées depuis votre espace", c: C.teal, Ic: CheckCircle2 },
+    enregistre: { t: "Import enregistré — conservé à l'actualisation", c: C.vert, Ic: CheckCircle2 },
+    inchange: { t: "Déjà enregistré — aucun doublon créé", c: C.muted, Ic: Info },
+    erreur: { t: "Enregistrement différé (réessayez l'import)", c: C.ambre, Ic: AlertTriangle },
+  };
+  const m = map[etat.etat] || map.enregistre;
+  return (
+    <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2 rounded-full border bg-white/95 px-3 py-1.5 text-xs shadow-lg backdrop-blur" style={{ borderColor: C.hairline, color: C.ink }}>
+      <m.Ic size={14} style={{ color: m.c }} />
+      <span className="font-semibold">{m.t}</span>
+    </div>
+  );
+}
+
 function PromptImport({ goImport }) { return <Vide icone={UploadCloud} titre="Importez d'abord vos données" texte="Cet écran s'appuie sur votre fichier de gestion. Passez par l'onglet Import pour connecter vos ventes et dépenses." action="Aller à l'import" onAction={goImport} />; }
+
+/* ============================================================
+   Phase 3 — espace institution RÉEL & gestion des partages (PME)
+   ------------------------------------------------------------
+   Aucune donnée n'est inventée : l'institution ne voit que les PME
+   l'ayant explicitement autorisée, et uniquement ce que l'évaluation
+   officielle expose (score, état, période, instantané). Le portefeuille
+   fictif (genererPortefeuille) reste cantonné à la démonstration.
+   ============================================================ */
+const fmtMontantFCFA = (n) => (n == null ? "—" : `${new Intl.NumberFormat("fr-FR").format(Math.round(Number(n) || 0))} FCFA`);
+const ETAT_STYLE = {
+  "Sain": { bg: "#ECFDF5", c: "#047857" },
+  "Vigilance": { bg: "#FFFBEB", c: "#B45309" },
+  "Alerte précoce": { bg: "#FEF2F2", c: C.rouge },
+};
+const EtatPuce = ({ etat }) => { const s = ETAT_STYLE[etat] || { bg: C.canvas, c: C.muted }; return <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: s.bg, color: s.c }}>{etat || "—"}</span>; };
+const ALERTE_STYLE = { haute: { bg: "#FEF2F2", c: C.rouge }, moyenne: { bg: "#FFFBEB", c: "#B45309" }, faible: { bg: C.canvas, c: C.muted } };
+const AlertePuce = ({ severity }) => { const s = ALERTE_STYLE[severity] || ALERTE_STYLE.faible; return <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: s.bg, color: s.c }}><ShieldAlert size={11} /> Alerte</span>; };
+const dateFR = (iso) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }); } catch { return "—"; } };
+
+function InstitutionVide({ onPME }) {
+  return <Vide icone={Landmark} titre="Aucune institution rattachée à votre compte" texte="Votre compte n'est membre d'aucune organisation de type institution. Si vous gérez une PME, revenez à l'espace PME." action="Aller à l'espace PME" onAction={onPME} />;
+}
+
+function EspaceInstitutionReel({ org }) {
+  const [liste, setListe] = useState(null);
+  const [erreur, setErreur] = useState(null);
+  const [sel, setSel] = useState(null);
+
+  useEffect(() => {
+    let vivant = true;
+    portefeuilleInstitution(org.id)
+      .then((r) => { if (vivant) setListe(r.portefeuille || []); })
+      .catch((e) => { if (vivant) { setErreur(e.message || "Lecture impossible."); setListe([]); } });
+    return () => { vivant = false; };
+  }, [org.id]);
+
+  if (sel) return <FichePmeReelle institutionId={org.id} pme={sel} onBack={() => setSel(null)} />;
+
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="text-lg font-bold" style={{ color: C.ink }}>Portefeuille — PME consentantes</div>
+        <p className="mt-1 text-sm" style={{ color: C.muted }}>Seules les PME qui ont accordé un partage à <span className="font-semibold">{org.nom}</span> apparaissent ici. Les accès sont contrôlés côté serveur ; une révocation les retire immédiatement.</p>
+      </div>
+      {erreur && <div className="mb-4 rounded-lg px-3 py-2 text-xs" style={{ background: "#FEF2F2", color: C.rouge }}>{erreur}</div>}
+      {liste == null ? <div className="text-sm" style={{ color: C.muted }}>Chargement…</div>
+        : liste.length === 0 ? <Vide icone={Building2} titre="Aucune PME ne partage encore ses données" texte="Dès qu'une PME vous accordera l'accès à ses évaluations, elle apparaîtra ici avec son dernier diagnostic." />
+        : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {liste.map((p) => (
+              <div key={p.pmeOrgId} className="rounded-2xl border bg-white p-4" style={{ borderColor: C.hairline }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-bold" style={{ color: C.ink }}>{p.nom}</div>
+                    <div className="mt-0.5 text-[11px]" style={{ color: C.muted }}>Partagé depuis le {dateFR(p.depuis)}{p.expire ? ` · expire le ${dateFR(p.expire)}` : ""}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {p.alerte && <AlertePuce severity={p.alerte.severity} />}
+                    {p.evaluation && <EtatPuce etat={p.evaluation.etat} />}
+                  </div>
+                </div>
+                {p.alerte && <div className="mt-2 rounded-lg px-2.5 py-1.5 text-[11px]" style={{ background: (ALERTE_STYLE[p.alerte.severity] || ALERTE_STYLE.faible).bg, color: (ALERTE_STYLE[p.alerte.severity] || ALERTE_STYLE.faible).c }}>{p.alerte.message}</div>}
+                {p.evaluation ? (
+                  <div className="mt-3 flex items-end justify-between">
+                    <div>
+                      <div className="text-2xl font-bold" style={{ color: C.ink }}>{p.evaluation.score ?? "—"}<span className="text-sm font-medium" style={{ color: C.muted }}> /100</span></div>
+                      <div className="text-[11px]" style={{ color: C.muted }}>évalué le {dateFR(p.evaluation.computed_at)}</div>
+                    </div>
+                    <button onClick={() => setSel(p)} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.ink }}>Voir <ChevronRight size={14} /></button>
+                  </div>
+                ) : <div className="mt-3 text-xs" style={{ color: C.muted }}>Partage accordé — évaluation pas encore calculée par la PME.</div>}
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function FichePmeReelle({ institutionId, pme, onBack }) {
+  const [data, setData] = useState(null);
+  const [erreur, setErreur] = useState(null);
+  const [alertes, setAlertes] = useState([]);
+  useEffect(() => {
+    let vivant = true;
+    pmeAutorisee(institutionId, pme.pmeOrgId)
+      .then((r) => { if (vivant) setData(r); })
+      .catch((e) => { if (vivant) setErreur(e.code === "consentement" ? "Le consentement de cette PME n'est plus actif." : (e.message || "Accès impossible.")); });
+    listerAlertes(pme.pmeOrgId, true).then((r) => { if (vivant) setAlertes(r.alertes || []); }).catch(() => {});
+    return () => { vivant = false; };
+  }, [institutionId, pme.pmeOrgId]);
+
+  const evals = data?.evaluations || [];
+  const dernier = evals[0] || pme.evaluation || null;
+  const snap = dernier?.snapshot || {};
+
+  return (
+    <div>
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1 text-sm font-semibold" style={{ color: C.teal }}><ArrowLeft size={16} /> Portefeuille</button>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-lg font-bold" style={{ color: C.ink }}>{pme.nom}</div>
+        {dernier && <EtatPuce etat={dernier.etat} />}
+      </div>
+      {erreur && <div className="mt-4 rounded-lg px-3 py-2 text-xs" style={{ background: "#FEF2F2", color: C.rouge }}>{erreur}</div>}
+      {!erreur && data == null && <div className="mt-4 text-sm" style={{ color: C.muted }}>Chargement…</div>}
+
+      {alertes.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {alertes.map((a) => { const s = ALERTE_STYLE[a.severity] || ALERTE_STYLE.faible; return (
+            <div key={a.id} className="flex items-start gap-2 rounded-xl border px-3 py-2 text-sm" style={{ borderColor: C.hairline, background: s.bg }}>
+              <ShieldAlert size={15} style={{ color: s.c }} className="mt-0.5 shrink-0" />
+              <div><div className="font-semibold" style={{ color: s.c }}>Alerte précoce</div><div className="text-[13px]" style={{ color: C.ink }}>{a.message}</div><div className="mt-0.5 text-[11px]" style={{ color: C.muted }}>{dateFR(a.created_at)}</div></div>
+            </div>); })}
+        </div>
+      )}
+
+      {dernier && (
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <Stat libelle="Score" valeur={`${dernier.score ?? "—"} /100`} />
+          <Stat libelle="Trésorerie disponible" valeur={fmtMontantFCFA(snap.disponible)} />
+          <Stat libelle="Jours de trésorerie" valeur={snap.joursTreso != null ? `${snap.joursTreso} j` : "—"} />
+        </div>
+      )}
+
+      {evals.length > 0 && (
+        <div className="mt-6">
+          <div className="mb-2 text-sm font-bold" style={{ color: C.ink }}>Historique des évaluations</div>
+          <div className="overflow-hidden rounded-2xl border bg-white" style={{ borderColor: C.hairline }}>
+            <table className="w-full text-sm">
+              <thead><tr style={{ color: C.muted }} className="text-left text-xs">
+                <th className="px-3 py-2 font-semibold">Évalué le</th><th className="px-3 py-2 font-semibold">Période</th><th className="px-3 py-2 font-semibold">Score</th><th className="px-3 py-2 font-semibold">État</th>
+              </tr></thead>
+              <tbody>
+                {evals.map((e) => (
+                  <tr key={e.id} className="border-t" style={{ borderColor: C.hairline }}>
+                    <td className="px-3 py-2">{dateFR(e.computed_at)}</td>
+                    <td className="px-3 py-2" style={{ color: C.muted }}>{e.period_start ? `${dateFR(e.period_start)} → ${dateFR(e.period_end)}` : "—"}</td>
+                    <td className="px-3 py-2 font-semibold">{e.score ?? "—"}</td>
+                    <td className="px-3 py-2"><EtatPuce etat={e.etat} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[11px]" style={{ color: C.muted }}>Chaque évaluation est historisée avec sa version de modèle : deux dates successives expliquent l'évolution du risque.</p>
+        </div>
+      )}
+
+      {(data?.indicateurs || []).length > 0 && (
+        <div className="mt-6">
+          <div className="mb-2 text-sm font-bold" style={{ color: C.ink }}>Signaux du dernier diagnostic</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {data.indicateurs.map((s, i) => (
+              <div key={i} className="flex items-center justify-between rounded-lg border bg-white px-3 py-2 text-sm" style={{ borderColor: C.hairline }}>
+                <span style={{ color: C.muted }}>{s.name}</span><span className="font-semibold" style={{ color: C.ink }}>{s.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ libelle, valeur }) {
+  return <div className="rounded-2xl border bg-white p-4" style={{ borderColor: C.hairline }}><div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: C.muted }}>{libelle}</div><div className="mt-1 text-lg font-bold" style={{ color: C.ink }}>{valeur}</div></div>;
+}
+
+function BandeauAlertesPME({ org }) {
+  const [alertes, setAlertes] = useState([]);
+  const [busy, setBusy] = useState(null); // id en cours d'acquittement
+  useEffect(() => {
+    let vivant = true;
+    listerAlertes(org.id, true).then((r) => { if (vivant) setAlertes(r.alertes || []); }).catch(() => {});
+    return () => { vivant = false; };
+  }, [org.id]);
+
+  async function acquitter(a) {
+    setBusy(a.id);
+    try { await acquitterAlerte({ orgId: org.id, alertId: a.id }); setAlertes((xs) => xs.filter((x) => x.id !== a.id)); }
+    catch { /* on laisse l'alerte affichée si l'acquittement échoue */ }
+    finally { setBusy(null); }
+  }
+
+  if (!alertes.length) return null;
+  return (
+    <div className="mb-5 space-y-2">
+      {alertes.map((a) => { const s = ALERTE_STYLE[a.severity] || ALERTE_STYLE.faible; return (
+        <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3" style={{ borderColor: C.hairline, background: s.bg }}>
+          <div className="flex items-start gap-2">
+            <ShieldAlert size={16} style={{ color: s.c }} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="text-sm font-bold" style={{ color: s.c }}>Alerte précoce sur votre trésorerie</div>
+              <div className="text-[13px]" style={{ color: C.ink }}>{a.message}</div>
+              <div className="mt-0.5 text-[11px]" style={{ color: C.muted }}>Détectée le {dateFR(a.created_at)} · visible par les institutions que vous avez autorisées.</div>
+            </div>
+          </div>
+          <button onClick={() => acquitter(a)} disabled={busy === a.id} className="inline-flex items-center gap-1 rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={{ borderColor: C.hairline, color: C.ink }}>
+            <CheckCircle2 size={13} style={{ color: C.teal }} /> {busy === a.id ? "…" : "J'ai pris connaissance"}
+          </button>
+        </div>); })}
+    </div>
+  );
+}
+
+function Connecteurs({ org }) {
+  const peut = ["owner", "finance_manager"].includes(org.role);
+  const [liste, setListe] = useState(null);
+  const [erreur, setErreur] = useState(null);
+  const [ok, setOk] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [site, setSite] = useState("");
+  const [apikey, setApikey] = useState("");
+
+  const recharger = useCallback(async () => {
+    try { const r = await listerIntegrations(org.id); setListe(r.integrations || []); }
+    catch (e) { setErreur(e.message || "Lecture impossible."); setListe([]); }
+  }, [org.id]);
+  useEffect(() => { recharger(); }, [recharger]);
+
+  async function soumettre(e) {
+    e.preventDefault(); setErreur(null); setOk(null); setBusy(true);
+    try {
+      if (!site.trim() || !apikey.trim()) throw new Error("Renseignez l'identifiant de site et la clé API CinetPay.");
+      await enregistrerIntegration({ orgId: org.id, externalSiteId: site.trim(), apikey: apikey.trim() });
+      setApikey(""); setSite("");                 // la clé ne reste jamais côté navigateur
+      setOk("Compte marchand connecté. La clé est chiffrée côté serveur et ne sera plus réaffichée.");
+      await recharger();
+    } catch (ex) {
+      setErreur(
+        ex.code === "site_pris" ? "Ce compte marchand est déjà rattaché à une autre organisation."
+        : ex.code === "chiffrement_indisponible" ? "Le serveur n'est pas configuré pour stocker la clé en sécurité (VIGIE_ENC_KEY)."
+        : ex.code === "role" ? "Votre rôle ne permet pas de connecter un compte marchand."
+        : ex.message || "Connexion impossible."
+      );
+    } finally { setBusy(false); }
+  }
+  async function revoquer(i) {
+    setBusy(true); setErreur(null); setOk(null);
+    try { await revoquerIntegration({ orgId: org.id, integrationId: i.id }); await recharger(); }
+    catch (ex) { setErreur(ex.message || "Révocation impossible."); }
+    finally { setBusy(false); }
+  }
+
+  const champ = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="text-lg font-bold" style={{ color: C.ink }}>Connecteurs d'encaissement</div>
+        <p className="mt-1 text-sm" style={{ color: C.muted }}>Connectez votre compte marchand CinetPay : vos encaissements mobile money alimentent alors automatiquement votre trésorerie. Votre clé API est <span className="font-semibold">chiffrée côté serveur</span> et n'est jamais réaffichée.</p>
+      </div>
+      {erreur && <div className="mb-4 rounded-lg px-3 py-2 text-xs" style={{ background: "#FEF2F2", color: C.rouge }}>{erreur}</div>}
+      {ok && <div className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: "#ECFDF5", color: "#047857" }}><CheckCircle2 size={14} /> {ok}</div>}
+
+      {peut ? (
+        <form onSubmit={soumettre} className="mb-6 rounded-2xl border bg-white p-4" style={{ borderColor: C.hairline }}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: C.muted }}>Identifiant de site (site_id CinetPay)</label>
+              <input value={site} onChange={(e) => setSite(e.target.value)} inputMode="numeric" placeholder="ex. 105890XX" className={champ} style={{ borderColor: C.hairline }} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: C.muted }}>Clé API (secret)</label>
+              <input type="password" autoComplete="off" value={apikey} onChange={(e) => setApikey(e.target.value)} placeholder="collez votre clé API" className={champ} style={{ borderColor: C.hairline }} />
+            </div>
+          </div>
+          <div className="mt-2 flex items-start gap-1.5 text-[11px]" style={{ color: C.muted }}><ShieldCheck size={13} style={{ color: C.teal }} className="mt-0.5 shrink-0" /> La clé transite une seule fois (HTTPS), est chiffrée au repos (AES-256-GCM) et ne quitte jamais le serveur. Déclarez l'URL <code>/api/banque/notify</code> comme <code>notify_url</code> dans CinetPay.</div>
+          <button type="submit" disabled={busy} className="mt-4 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ background: C.ink }}><Plus size={15} /> {busy ? "Connexion…" : "Connecter le compte marchand"}</button>
+        </form>
+      ) : (
+        <div className="mb-6 rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas, border: `1px solid ${C.hairline}`, color: C.muted }}>Seul un responsable (propriétaire ou direction financière) peut connecter un compte marchand. Vous pouvez consulter les comptes connectés ci-dessous.</div>
+      )}
+
+      <div className="text-sm font-bold" style={{ color: C.ink }}>Comptes connectés</div>
+      {liste == null ? <div className="mt-2 text-sm" style={{ color: C.muted }}>Chargement…</div>
+        : liste.length === 0 ? <div className="mt-2 text-sm" style={{ color: C.muted }}>Aucun compte marchand connecté pour l'instant.</div>
+        : (
+          <div className="mt-2 space-y-2">
+            {liste.map((i) => { const actif = i.status === "active"; return (
+              <div key={i.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-4 py-3" style={{ borderColor: C.hairline }}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Smartphone size={14} style={{ color: C.teal }} />
+                    <span className="font-semibold" style={{ color: C.ink }}>CinetPay · site {i.external_site_id}</span>
+                    <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: actif ? "#ECFDF5" : C.canvas, color: actif ? "#047857" : C.muted }}>{actif ? "Actif" : "Révoqué"}</span>
+                  </div>
+                  <div className="mt-1 text-[11px]" style={{ color: C.muted }}>{i.credentials_added_at ? `Clé enregistrée le ${dateFR(i.credentials_added_at)}` : "—"}</div>
+                </div>
+                {peut && actif && <button onClick={() => revoquer(i)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={{ borderColor: C.hairline, color: C.rouge }}><Ban size={13} /> Révoquer</button>}
+              </div>); })}
+          </div>
+        )}
+
+      <RapprochementVersements org={org} peut={peut} />
+    </div>
+  );
+}
+
+function RapprochementVersements({ org, peut }) {
+  const moisCourant = new Date().toISOString().slice(0, 7);
+  const [mois, setMois] = useState(moisCourant);
+  const [rap, setRap] = useState(null);
+  const [erreur, setErreur] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [ref, setRef] = useState("");
+  const [net, setNet] = useState("");
+  const [frais, setFrais] = useState("");
+  const [le, setLe] = useState("");
+
+  const recharger = useCallback(async () => {
+    try { const r = await lireRapprochement(org.id, mois); setRap(r.rapprochement); setErreur(null); }
+    catch (e) { setErreur(e.message || "Lecture impossible."); setRap(null); }
+  }, [org.id, mois]);
+  useEffect(() => { recharger(); }, [recharger]);
+
+  async function soumettre(e) {
+    e.preventDefault(); setErreur(null); setBusy(true);
+    try {
+      if (!ref.trim() || net === "") throw new Error("Référence et montant net requis.");
+      await enregistrerVersement({ orgId: org.id, providerRef: ref.trim(), netAmount: Number(net), fees: frais === "" ? null : Number(frais), settledOn: le || null });
+      setRef(""); setNet(""); setFrais(""); setLe("");
+      await recharger();
+    } catch (ex) { setErreur(ex.message || "Enregistrement impossible."); }
+    finally { setBusy(false); }
+  }
+
+  const champ = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+  return (
+    <div className="mt-8 border-t pt-6" style={{ borderColor: C.hairline }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-bold" style={{ color: C.ink }}>Rapprochement des versements</div>
+          <p className="mt-0.5 text-[12px]" style={{ color: C.muted }}>Confronte vos encaissements CinetPay au net réellement reversé sur votre compte (frais de l'agrégateur compris).</p>
+        </div>
+        <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: C.hairline }} />
+      </div>
+      {erreur && <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: "#FEF2F2", color: C.rouge }}>{erreur}</div>}
+
+      {rap && (
+        <>
+          <div className="mt-3 grid gap-3 sm:grid-cols-4">
+            <Stat libelle="Encaissé (brut)" valeur={fmtMontantFCFA(rap.brut)} />
+            <Stat libelle="Reversé (net)" valeur={fmtMontantFCFA(rap.net)} />
+            <Stat libelle="Frais agrégateur" valeur={fmtMontantFCFA(rap.frais)} />
+            <Stat libelle="Non encore reversé" valeur={fmtMontantFCFA(rap.ecart)} />
+          </div>
+          <div className="mt-1.5 text-[11px]" style={{ color: C.muted }}>{rap.nbEncaissements} encaissement(s) · {rap.nbVersements} versement(s). L'écart est indicatif : les versements retardent les encaissements.</div>
+          {rap.versements?.length > 0 && (
+            <div className="mt-3 overflow-hidden rounded-xl border bg-white" style={{ borderColor: C.hairline }}>
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs" style={{ color: C.muted }}><th className="px-3 py-2 font-semibold">Référence</th><th className="px-3 py-2 font-semibold">Net</th><th className="px-3 py-2 font-semibold">Frais</th><th className="px-3 py-2 font-semibold">Date</th></tr></thead>
+                <tbody>{rap.versements.map((v) => (
+                  <tr key={v.ref} className="border-t" style={{ borderColor: C.hairline }}>
+                    <td className="px-3 py-2 font-medium" style={{ color: C.ink }}>{v.ref}</td>
+                    <td className="px-3 py-2">{fmtMontantFCFA(v.net)}</td>
+                    <td className="px-3 py-2" style={{ color: C.muted }}>{fmtMontantFCFA(v.frais)}</td>
+                    <td className="px-3 py-2" style={{ color: C.muted }}>{v.le ? dateFR(v.le) : "—"}</td>
+                  </tr>))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {peut && (
+        <form onSubmit={soumettre} className="mt-4 rounded-2xl border bg-white p-4" style={{ borderColor: C.hairline }}>
+          <div className="mb-2 text-xs font-semibold" style={{ color: C.muted }}>Enregistrer un versement reçu</div>
+          <div className="grid gap-3 sm:grid-cols-4">
+            <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Référence versement" className={champ} style={{ borderColor: C.hairline }} />
+            <input value={net} onChange={(e) => setNet(e.target.value)} inputMode="numeric" placeholder="Net reçu (FCFA)" className={champ} style={{ borderColor: C.hairline }} />
+            <input value={frais} onChange={(e) => setFrais(e.target.value)} inputMode="numeric" placeholder="Frais (FCFA)" className={champ} style={{ borderColor: C.hairline }} />
+            <input type="date" value={le} onChange={(e) => setLe(e.target.value)} className={champ} style={{ borderColor: C.hairline }} />
+          </div>
+          <button type="submit" disabled={busy} className="mt-3 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ background: C.ink }}><Plus size={15} /> {busy ? "Enregistrement…" : "Ajouter le versement"}</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function Partages({ org }) {
+  const peut = ["owner", "finance_manager"].includes(org.role);
+  const [grants, setGrants] = useState(null);
+  const [annuaire, setAnnuaire] = useState([]);
+  const [erreur, setErreur] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [instId, setInstId] = useState("");
+  const [scopes, setScopes] = useState(() => new Set(["assessments"]));
+  const [expire, setExpire] = useState("");
+  const [note, setNote] = useState("");
+
+  const recharger = useCallback(async () => {
+    try { const r = await listerAutorisations(org.id); setGrants(r.grants || []); }
+    catch (e) { setErreur(e.message || "Lecture impossible."); setGrants([]); }
+  }, [org.id]);
+  useEffect(() => { recharger(); listerInstitutions().then((r) => setAnnuaire(r.institutions || [])).catch(() => {}); }, [recharger]);
+
+  const toggle = (s) => setScopes((prev) => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
+  const nomInst = (id) => annuaire.find((i) => i.id === id)?.nom || `${String(id).slice(0, 8)}…`;
+
+  async function soumettre(e) {
+    e.preventDefault(); setErreur(null); setBusy(true);
+    try {
+      if (!instId) throw new Error("Choisissez une institution.");
+      if (scopes.size === 0) throw new Error("Sélectionnez au moins une donnée à partager.");
+      await accorderAcces({ pmeOrgId: org.id, institutionOrgId: instId, scopes: [...scopes], expiresAt: expire ? new Date(expire + "T23:59:59").toISOString() : null, note: note || null });
+      setInstId(""); setNote(""); setExpire(""); setScopes(new Set(["assessments"]));
+      await recharger();
+    } catch (ex) { setErreur(ex.message || "Partage impossible."); }
+    finally { setBusy(false); }
+  }
+  async function revoquer(g) {
+    setBusy(true); setErreur(null);
+    try { await revoquerAcces({ grantId: g.id, pmeOrgId: org.id }); await recharger(); }
+    catch (ex) { setErreur(ex.message || "Révocation impossible."); }
+    finally { setBusy(false); }
+  }
+
+  const accordes = (grants || []).filter((g) => g.pme_org_id === org.id);
+  const champ = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="text-lg font-bold" style={{ color: C.ink }}>Partage de mes données</div>
+        <p className="mt-1 text-sm" style={{ color: C.muted }}>Vous décidez quelle institution peut consulter vos données, pour quelles informations et jusqu'à quand. Vous pouvez révoquer un accès à tout moment — il cesse immédiatement.</p>
+      </div>
+      {erreur && <div className="mb-4 rounded-lg px-3 py-2 text-xs" style={{ background: "#FEF2F2", color: C.rouge }}>{erreur}</div>}
+
+      {peut ? (
+        <form onSubmit={soumettre} className="mb-6 rounded-2xl border bg-white p-4" style={{ borderColor: C.hairline }}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: C.muted }}>Institution</label>
+              <select value={instId} onChange={(e) => setInstId(e.target.value)} className={champ} style={{ borderColor: C.hairline }}>
+                <option value="">— Choisir —</option>
+                {annuaire.map((i) => <option key={i.id} value={i.id}>{i.nom}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: C.muted }}>Échéance (facultative)</label>
+              <input type="date" value={expire} onChange={(e) => setExpire(e.target.value)} className={champ} style={{ borderColor: C.hairline }} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <div className="mb-1 text-xs font-semibold" style={{ color: C.muted }}>Données partagées</div>
+            <div className="flex flex-wrap gap-2">
+              {SCOPES_PARTAGE.map((s) => { const on = scopes.has(s); return (
+                <button type="button" key={s} onClick={() => toggle(s)} className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold" style={{ borderColor: on ? C.teal : C.hairline, background: on ? "#F0F5F4" : "#fff", color: on ? C.teal : C.muted }}>
+                  {on ? <CheckCircle2 size={13} /> : <Plus size={13} />} {SCOPE_LABEL[s]}
+                </button>); })}
+            </div>
+          </div>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note interne (facultative)" className={`${champ} mt-3`} style={{ borderColor: C.hairline }} />
+          <button type="submit" disabled={busy} className="mt-4 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" style={{ background: C.ink }}>
+            <ShieldCheck size={15} /> {busy ? "Enregistrement…" : "Accorder l'accès"}
+          </button>
+        </form>
+      ) : (
+        <div className="mb-6 rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas, border: `1px solid ${C.hairline}`, color: C.muted }}>
+          Seul un responsable (propriétaire ou direction financière) peut accorder ou révoquer un partage. Vous pouvez consulter les partages en cours ci-dessous.
+        </div>
+      )}
+
+      <div className="text-sm font-bold" style={{ color: C.ink }}>Partages accordés</div>
+      {grants == null ? <div className="mt-2 text-sm" style={{ color: C.muted }}>Chargement…</div>
+        : accordes.length === 0 ? <div className="mt-2 text-sm" style={{ color: C.muted }}>Aucun partage pour l'instant.</div>
+        : (
+          <div className="mt-2 space-y-2">
+            {accordes.map((g) => {
+              const actif = g.status === "active" && (!g.expires_at || new Date(g.expires_at) > new Date());
+              return (
+                <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-4 py-3" style={{ borderColor: C.hairline }}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Landmark size={14} style={{ color: C.teal }} />
+                      <span className="font-semibold" style={{ color: C.ink }}>{nomInst(g.institution_org_id)}</span>
+                      <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: actif ? "#ECFDF5" : C.canvas, color: actif ? "#047857" : C.muted }}>{actif ? "Actif" : g.status === "revoked" ? "Révoqué" : "Expiré"}</span>
+                    </div>
+                    <div className="mt-1 text-[11px]" style={{ color: C.muted }}>{(g.scopes || []).map((s) => SCOPE_LABEL[s] || s).join(" · ")}{g.expires_at ? ` · jusqu'au ${dateFR(g.expires_at)}` : ""}</div>
+                  </div>
+                  {peut && actif && (
+                    <button onClick={() => revoquer(g)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50" style={{ borderColor: C.hairline, color: C.rouge }}><Ban size={13} /> Révoquer</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+    </div>
+  );
+}
+
+/* ---------- Anomalies (Niveau 3 : identifier les anomalies) ---------- */
+const ANOMALIE_META = {
+  doublon: { label: "Doublon probable", Ic: Layers },
+  inhabituel: { label: "Montant inhabituel", Ic: TrendingUp },
+  exceptionnel: { label: "Opération exceptionnelle", Ic: CircleDollarSign },
+};
+const SEVERITE_STYLE = {
+  "élevée": { bg: "#FEF2F2", c: C.rouge, label: "À vérifier en priorité" },
+  "moyenne": { bg: "#FFFBEB", c: C.ambre, label: "À contrôler" },
+  "faible": { bg: "#F5F6F4", c: C.muted, label: "Pour information" },
+};
+const dateISOcourte = (iso) => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y.slice(2)}`; };
+function phraseAnomalie(a, court) {
+  const q = a.sens === "SORTIE" ? "paiement" : "encaissement";
+  if (a.type === "doublon") return `Deux ${q}s « ${a.tiers} » de ${court(a.montant)} ${a.ecartJours === 0 ? "le même jour" : `à ${a.ecartJours} jour${a.ecartJours > 1 ? "s" : ""} d'intervalle`} (${dateISOcourte(a.ops[0].date)} puis ${dateISOcourte(a.ops[1].date)}). Vérifiez qu'il ne s'agit pas d'un double ${a.sens === "SORTIE" ? "règlement" : "comptage"}.`;
+  if (a.type === "inhabituel") return `${a.sens === "SORTIE" ? "Dépense" : "Encaissement"} « ${a.tiers} » de ${court(a.montant)} le ${dateISOcourte(a.date)}, soit ${a.facteur.toFixed(1)}× l'habitude pour ce tiers (~${court(a.habituel)}).`;
+  return `${a.sens === "SORTIE" ? "Dépense" : "Encaissement"} isolé « ${a.tiers} » de ${court(a.montant)} le ${dateISOcourte(a.date)} — environ ${Math.round(a.facteur)}× le montant courant des opérations (~${court(a.habituel)}).`;
+}
+function Anomalies({ resultat }) {
+  const { court } = useMontants();
+  const { anomalies, parType, montantARisque } = resultat.anomalies;
+  if (!anomalies.length) {
+    return (
+      <div className="space-y-4">
+        <EnTeteAnomalies />
+        <Carte className="flex flex-col items-center p-8 text-center">
+          <CheckCircle2 size={30} style={{ color: C.vert }} />
+          <div className="mt-3 text-sm font-semibold">Aucune anomalie détectée</div>
+          <div className="mt-1 max-w-md text-sm" style={{ color: C.muted }}>VIGIE a passé en revue vos {resultat.nbValides} opérations : pas de paiement en double, de montant inhabituel ni d'opération exceptionnelle à signaler.</div>
+        </Carte>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-5">
+      <EnTeteAnomalies />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[["doublon", "Doublons"], ["inhabituel", "Inhabituels"], ["exceptionnel", "Exceptionnels"]].map(([t, lbl]) => (
+          <Carte key={t} className="p-4"><div className="text-xs" style={{ color: C.muted }}>{lbl}</div><div className="mt-1 text-2xl font-semibold tabular-nums">{parType[t] || 0}</div></Carte>
+        ))}
+        <Carte className="p-4"><div className="text-xs" style={{ color: C.muted }}>Montant à risque (doublons)</div><div className="mt-1 text-2xl font-semibold tabular-nums" style={{ color: montantARisque > 0 ? C.rouge : C.ink }}>{court(montantARisque)}</div></Carte>
+      </div>
+      <Carte>
+        <div className="border-b px-5 py-3 text-sm font-semibold" style={{ borderColor: C.hairline }}>{anomalies.length} point{anomalies.length > 1 ? "s" : ""} à vérifier</div>
+        <div className="divide-y" style={{ borderColor: C.hairline }}>
+          {anomalies.map((a) => { const meta = ANOMALIE_META[a.type], sv = SEVERITE_STYLE[a.severite]; return (
+            <div key={a.id} className="flex items-start gap-3 px-5 py-4 text-sm">
+              <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg" style={{ background: sv.bg, color: sv.c }}><meta.Ic size={16} /></span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold">{meta.label}</span>
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: sv.bg, color: sv.c }}>{sv.label}</span>
+                </div>
+                <div className="mt-1" style={{ color: C.muted }}>{phraseAnomalie(a, court)}</div>
+              </div>
+            </div>); })}
+        </div>
+      </Carte>
+      <p className="px-1 text-[11px]" style={{ color: C.muted }}>Analyse automatique de vos {resultat.nbValides} opérations importées (doublons, montants hors norme, opérations isolées). Ce sont des pistes de vérification, pas des certitudes : vous restez juge de chaque ligne.</p>
+    </div>
+  );
+}
+function EnTeteAnomalies() { return <div><h2 className="text-lg font-semibold">Anomalies</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>VIGIE repère les paiements en double, les montants inhabituels et les opérations exceptionnelles dans vos données, pour sécuriser votre trésorerie.</p></div>; }
 
 /* ============================================================ IMPORT (4 étapes) ============================================================ */
 const ETAPES = ["Dépôt", "Correspondance", "Validation", "Profil"];
@@ -666,10 +1412,12 @@ function ReperesTemps({ temps: t, diag }) {
     </Carte>
   );
 }
-function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
+function AnalyseMensuelle({ resultat, entreprise, temps: t, saisons = [], onReglages }) {
   const { montant, court } = useMontants();
   const { mois, diag, solde, soldeDetecte, soldeSaisi } = resultat;
   const st = ETATS_MOIS[diag.niveau], der = diag.dernier;
+  const prevision = useMemo(() => prevoirTresorerie(mois, saisons), [mois, saisons]);
+  const saisonDer = saisonDuMois(der.cle, saisons);
   const donnees = mois.map((m) => ({ mois: libelleMois(m.cle), encaisse: m.encaisse, decaisse: m.decaisse, score: m.score, etat: m.etat }));
   const titre = { "Alerte précoce": "Alerte précoce : la situation se dégrade", Vigilance: "Vigilance : des signaux faiblissent", Sain: "Situation saine" }[diag.niveau];
   const phrases = [
@@ -677,11 +1425,18 @@ function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
       : mois.length === 1 ? `Votre fichier couvre un seul mois (${libelleMois(der.cle, true)}) : la tendance apparaîtra dès qu'il contiendra au moins deux mois.` : `Score de ${der.score}/100 en ${libelleMois(der.cle, true)}, sans baisse en cours.`,
     t.premiereAlerte && `VIGIE aurait déclenché l'alerte précoce dès le ${dateLongueAn(t.premiereAlerte)} (données de ${libelleMois(diag.premiereAlerte.cle, true)}), ${relatif(-ecartJours(t.aujourdhui, t.premiereAlerte))}.`,
     t.dateTension && (t.joursAvantTension >= 0 ? `Au rythme des deux derniers mois, la trésorerie disponible serait épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)}.` : `Au rythme des deux derniers mois, la trésorerie disponible aurait été épuisée vers le ${dateLongueAn(t.dateTension)}, ${relatif(t.joursAvantTension)} : sans données plus récentes, la situation actuelle est à vérifier en priorité.`),
+    saisonDer && diag.niveau !== "Sain" && `${libelleMois(der.cle, true)} tombe dans une saison de baisse que vous avez déclarée (${saisonDer.nom}) : ce recul peut être normal pour votre activité.`,
   ].filter(Boolean);
   const Point = ({ cx, cy, payload }) => <circle cx={cx} cy={cy} r={4.5} fill="#fff" stroke={ETATS_MOIS[payload.etat].c} strokeWidth={2.5} />;
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Analyse mois par mois</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>{entreprise} · {mois.length > 1 ? `${mois.length} mois répertoriés, de ${libelleMois(mois[0].cle)} à ${libelleMois(der.cle)}` : `1 mois répertorié (${libelleMois(der.cle)})`} · {mois.reduce((a, m) => a + m.nbOps, 0)} opérations.</p></div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">Analyse mois par mois</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>{entreprise} · {mois.length > 1 ? `${mois.length} mois répertoriés, de ${libelleMois(mois[0].cle)} à ${libelleMois(der.cle)}` : `1 mois répertorié (${libelleMois(der.cle)})`} · {mois.reduce((a, m) => a + m.nbOps, 0)} opérations.</p></div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => exporterAnalysePME(resultat, prevision, entreprise, "xlsx")} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.ink }}><FileDown size={14} style={{ color: C.teal }} /> Export Excel</button>
+          <button onClick={() => exporterAnalysePME(resultat, prevision, entreprise, "csv")} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.ink }}><Download size={14} style={{ color: C.teal }} /> CSV</button>
+        </div>
+      </div>
       <div className="rounded-2xl p-5 sm:p-6" style={{ background: st.bg, border: `1px solid ${st.bd}` }}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
@@ -693,6 +1448,7 @@ function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
         </div>
       </div>
       <ReperesTemps temps={t} diag={diag} />
+      <Prevision prevision={prevision} mois={mois} saisons={saisons} onReglages={onReglages} />
       <Carte className="p-5">
         <div className="mb-1 text-sm font-semibold">Encaissements, décaissements et score</div>
         <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px]" style={{ color: C.muted }}><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: C.vert }} /> encaissé</span><span className="flex items-center gap-1"><span className="h-2 w-3 rounded-sm" style={{ background: "#F2A7A7" }} /> décaissé</span><span className="flex items-center gap-1"><span className="h-0.5 w-3" style={{ background: C.teal }} /> score (échelle de droite)</span><span className="flex items-center gap-1"><span className="h-0 w-3 border-t border-dashed" style={{ borderColor: C.rouge }} /> seuil d'alerte ({SEUIL_ALERTE})</span></div>
@@ -716,7 +1472,7 @@ function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
           <thead><tr className="text-left text-[11px]" style={{ color: C.muted }}>{["Mois", "Opérations", "Ventes", "Encaissé", "Décaissé", "Solde du mois", "Trésorerie dispo.", "Score", "Évolution", "État"].map((h, i) => <th key={h} className={"px-3 py-2 font-semibold " + (i === 0 ? "pl-5" : "") + (i >= 1 && i <= 7 ? " text-right" : "")}>{h}</th>)}</tr></thead>
           <tbody>{mois.map((m) => (
             <tr key={m.cle} className="border-t" style={{ borderColor: C.hairline }}>
-              <td className="whitespace-nowrap py-2.5 pl-5 pr-3 font-medium">{libelleMois(m.cle)}</td>
+              <td className="whitespace-nowrap py-2.5 pl-5 pr-3 font-medium">{libelleMois(m.cle)}{saisonDuMois(m.cle, saisons) && <span title={saisonDuMois(m.cle, saisons).nom} className="ml-1.5 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 align-middle text-[10px] font-semibold" style={{ background: "#EFF6FF", color: "#1D4ED8" }}><Snowflake size={9} /> saison</span>}</td>
               <td className="px-3 text-right tabular-nums" style={{ color: m.nbOps ? C.ink : C.ambre }}>{m.nbOps}</td>
               <td className="px-3 text-right tabular-nums">{court(m.ventes)}</td>
               <td className="px-3 text-right tabular-nums" style={{ color: C.vert }}>{court(m.encaisse)}</td>
@@ -748,6 +1504,60 @@ function AnalyseMensuelle({ resultat, entreprise, temps: t }) {
   );
 }
 
+/* ============================================================ PME : PRÉVISION DE TRÉSORERIE (N+1 → N+3) ============================================================ */
+function Prevision({ prevision, mois, saisons = [], onReglages }) {
+  const { montant, court } = useMontants();
+  if (!prevision || !prevision.futur.length) return null;
+  const histo = mois.slice(-3).map((m) => ({ label: libelleMois(m.cle), disponible: m.disponible }));
+  const data = [...histo, ...prevision.futur.map((f) => ({ label: f.label, disponible: f.disponible, range: [f.bas, f.haut] }))];
+  const borne = histo.length ? histo[histo.length - 1].label : null;
+  const der = prevision.futur[prevision.futur.length - 1];
+  const fiable = prevision.nbMois >= 3;
+  return (
+    <Carte className="p-5">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold"><LineChart size={16} style={{ color: C.teal }} /> Prévision de trésorerie · N+1 → N+3</div>
+        <span className="text-[11px]" style={{ color: C.muted }}>3 mois après {libelleMois(prevision.departCle)}</span>
+      </div>
+      <div className="mb-3 text-[11px] leading-relaxed" style={{ color: C.muted }}>Tendance des encaissements et décaissements des derniers mois, prolongée mois par mois et corrigée de vos saisons déclarées. La zone claire est la fourchette probable (l'incertitude grandit avec l'horizon).</div>
+      {!fiable && <div className="mb-3 rounded-lg p-2.5 text-[11px]" style={{ background: "#FFFBEB", color: C.ambre }}>Prévision établie sur {pluriel(prevision.nbMois, "mois")} d'historique seulement : elle se précisera avec davantage de mois.</div>}
+      <ResponsiveContainer width="100%" height={220}>
+        <ComposedChart data={data} margin={{ left: 0, right: 8, top: 6, bottom: 0 }}>
+          <defs><linearGradient id="gprev" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.teal} stopOpacity={0.2} /><stop offset="100%" stopColor={C.teal} stopOpacity={0.04} /></linearGradient></defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#EEF0ED" vertical={false} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.ink }} axisLine={false} tickLine={false} />
+          <YAxis tickFormatter={court} tick={{ fontSize: 10, fill: C.muted }} width={60} axisLine={false} tickLine={false} />
+          <Tooltip formatter={(v, n) => (n === "range" ? null : [montant(v), "Trésorerie disponible"])} contentStyle={{ borderRadius: 8, border: `1px solid ${C.hairline}`, fontSize: 12 }} />
+          <ReferenceLine y={0} stroke={C.rouge} strokeDasharray="4 3" />
+          {borne && <ReferenceLine x={borne} stroke={C.muted} strokeDasharray="3 3" label={{ value: "dernier mois connu", position: "insideTopRight", fontSize: 10, fill: C.muted }} />}
+          <Area dataKey="range" name="range" stroke="none" fill="url(#gprev)" connectNulls={false} legendType="none" isAnimationActive={false} />
+          <Line type="monotone" dataKey="disponible" name="Trésorerie disponible" stroke={C.teal} strokeWidth={2.4} dot={{ r: 3, fill: C.teal }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+      {prevision.rupture
+        ? <div className="mt-3 flex items-start gap-2 rounded-lg p-3 text-sm" style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}><AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: C.rouge }} /><span>Au rythme actuel, la trésorerie projetée passerait sous zéro dès <span className="font-semibold">{prevision.rupture.label}</span> ({montant(prevision.rupture.disponible)}). C'est le moment d'anticiper (report d'achats, relance des créances, rendez-vous avec le financeur).</span></div>
+        : <div className="mt-3 text-sm" style={{ color: C.muted }}>Trésorerie projetée fin {der.label} : <span className="font-semibold" style={{ color: der.disponible >= 0 ? C.teal : C.rouge }}>{montant(der.disponible)}</span> · fourchette probable {court(der.bas)} à {court(der.haut)}.</div>}
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[520px] text-sm">
+        <thead><tr className="text-left text-[11px]" style={{ color: C.muted }}>{["Horizon", "Mois", "Encaissements", "Décaissements", "Solde", "Trésorerie projetée", "Saison"].map((h, i) => <th key={h} className={"px-3 py-2 font-semibold " + (i === 0 ? "pl-0" : "") + (i >= 2 && i <= 5 ? " text-right" : "")}>{h}</th>)}</tr></thead>
+        <tbody>{prevision.futur.map((f) => (
+          <tr key={f.cle} className="border-t" style={{ borderColor: C.hairline }}>
+            <td className="py-2.5 pr-3 font-semibold" style={{ color: C.teal }}>{f.horizon}</td>
+            <td className="px-3 whitespace-nowrap">{f.label}</td>
+            <td className="px-3 text-right tabular-nums" style={{ color: C.vert }}>{court(f.encaisse)}</td>
+            <td className="px-3 text-right tabular-nums" style={{ color: C.rouge }}>{court(f.decaisse)}</td>
+            <td className="px-3 text-right tabular-nums" style={{ color: f.net >= 0 ? C.ink : C.rouge }}>{f.net > 0 ? "+" : ""}{court(f.net)}</td>
+            <td className="px-3 text-right tabular-nums font-semibold" style={{ color: f.disponible >= 0 ? C.ink : C.rouge }}>{court(f.disponible)}</td>
+            <td className="px-3 whitespace-nowrap">{f.saison ? <span title={f.saison} className="inline-flex items-center gap-0.5 text-[11px] font-semibold" style={{ color: "#1D4ED8" }}><Snowflake size={10} /> −{pct(f.baisse)}</span> : <span style={{ color: C.muted }}>—</span>}</td>
+          </tr>))}</tbody>
+      </table></div>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11px]" style={{ color: C.muted }}>
+        <Snowflake size={12} style={{ color: "#1D4ED8" }} /> Les saisons de baisse réduisent les encaissements prévus.
+        <button onClick={onReglages} className="font-semibold" style={{ color: C.teal }}>{saisons.length ? "Modifier mes saisons" : "Déclarer mes saisons de baisse"} →</button>
+      </div>
+    </Carte>
+  );
+}
+
 /* ============================================================ PME : TRÉSORERIE ============================================================ */
 function Tresorerie({ profil: p, moisCourant, nbMois, temps }) {
   const { montant, court } = useMontants();
@@ -775,12 +1585,13 @@ function Tresorerie({ profil: p, moisCourant, nbMois, temps }) {
 }
 
 /* ============================================================ PME : RAPPROCHEMENT (conditionnel) ============================================================ */
-function Rapprochement({ hasReleve, recon, releveAjoute, onAjouter }) {
+function Rapprochement({ hasReleve, recon, releveAjoute, onExempleReleve, moisCourant, connecteurs = [], banqueEtat = {}, onConnecter, onSync, onDeconnecter }) {
   const { court } = useMontants();
+  const connecteurPanel = <ConnecteursAPI connecteurs={connecteurs} moisCourant={moisCourant} banqueEtat={banqueEtat} onConnecter={onConnecter} onSync={onSync} onDeconnecter={onDeconnecter} />;
   // Branche A : rapprochement présent dans le fichier
   if (hasReleve) {
     if (recon.detecteSansDetail) {
-      return (<div className="space-y-4"><EnTeteRappro /><Carte className="flex items-start gap-3 p-5"><CheckCircle2 size={18} style={{ color: C.vert, marginTop: 1 }} /><div className="text-sm"><span className="font-semibold">Rapprochement détecté dans votre fichier.</span></div></Carte></div>);
+      return (<div className="space-y-4"><EnTeteRappro /><Carte className="flex items-start gap-3 p-5"><CheckCircle2 size={18} style={{ color: C.vert, marginTop: 1 }} /><div className="text-sm"><span className="font-semibold">Rapprochement détecté dans votre fichier.</span></div></Carte>{connecteurPanel}</div>);
     }
     const totC = recon.comptes.reduce((a, c) => a + c.comptable, 0), totR = recon.comptes.reduce((a, c) => a + c.releve, 0);
     return (
@@ -815,23 +1626,74 @@ function Rapprochement({ hasReleve, recon, releveAjoute, onAjouter }) {
               </div>); })}
           </div>
         </Carte>
+        {connecteurPanel}
       </div>
     );
   }
 
-  // Branche B : pas de rapprochement → option d'ajout
+  // Branche B : pas de rapprochement dans le fichier → connecteur réel, ou aperçu de démonstration
   return (
     <div className="space-y-5">
       <EnTeteRappro />
+      {connecteurPanel}
       {!releveAjoute ? (
         <Carte className="flex flex-col items-center p-8 text-center">
           <GitCompareArrows size={30} style={{ color: C.ambre }} />
-          <div className="mt-3 text-sm font-semibold">Rapprochement indisponible</div>
-          <div className="mt-1 max-w-md text-sm" style={{ color: C.muted }}>Ajoutez un relevé Wave, Orange Money ou banque pour détecter les écarts.</div>
-          <button onClick={onAjouter} className="mt-4 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}><Plus size={15} /> Ajouter un relevé</button>
+          <div className="mt-3 text-sm font-semibold">Voir un exemple de rapprochement</div>
+          <div className="mt-1 max-w-md text-sm" style={{ color: C.muted }}>Pas encore de source connectée ? Générez un aperçu à partir de vos encaissements du mois pour comprendre comment VIGIE détecte les écarts.</div>
+          <button onClick={onExempleReleve} className="mt-4 inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}><Plus size={15} /> Générer un aperçu (données simulées)</button>
+          <div className="mt-2 text-[11px]" style={{ color: C.muted }}>Aperçu pédagogique — ce n'est pas un relevé réel.</div>
         </Carte>
       ) : <ResultatRappro r={releveAjoute} />}
     </div>
+  );
+}
+/* ---------- connecteurs RÉELS : banque / mobile money via backend sécurisé ----------
+   Aucun secret n'est saisi ni stocké dans le navigateur : la connexion ouvre
+   le consentement hébergé du fournisseur (OAuth). Au retour, VIGIE lit les
+   vraies transactions renvoyées par le backend et les rapproche. */
+function ConnecteursAPI({ connecteurs = [], moisCourant, banqueEtat = {}, onConnecter, onSync, onDeconnecter }) {
+  const estConnecte = (id) => connecteurs.find((c) => c.fournisseur === id);
+  const nonConfigure = banqueEtat.dispo === false;
+  const enCours = banqueEtat.enCours;
+  const erreur = banqueEtat.erreur;
+  return (
+    <Carte className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3"><PlugZap size={18} className="mt-0.5 shrink-0" style={{ color: C.teal }} />
+          <div><div className="text-sm font-semibold">Connecter une banque ou un mobile money</div>
+            <div className="mt-0.5 text-xs" style={{ color: C.muted }}>VIGIE lit automatiquement le relevé réel via l'API du fournisseur et le rapproche de votre comptabilité du mois ({moisCourant ? libelleMois(moisCourant, true) : "en cours"}).</div></div></div>
+        {connecteurs.length > 0 && <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: "#ECFDF5", color: C.vert }}><CheckCircle2 size={11} /> {connecteurs.length} source(s) connectée(s)</span>}
+      </div>
+
+      {nonConfigure && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border p-2.5 text-[11px] leading-relaxed" style={{ borderColor: "#FCD34D", background: "#FFFBEB", color: "#92400E" }}>
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>La connexion bancaire n'est pas encore activée sur le serveur. Un administrateur doit configurer l'agrégateur (clés d'API côté backend). En attendant, utilisez l'import de fichier ou l'aperçu de démonstration ci-dessous.</span>
+        </div>
+      )}
+      {erreur && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border p-2.5 text-[11px] leading-relaxed" style={{ borderColor: "#FCA5A5", background: "#FEF2F2", color: "#991B1B" }}>
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" /> <span>{erreur.message}</span>
+        </div>
+      )}
+
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {FOURNISSEURS.map((f) => { const c = estConnecte(f.id); const busy = enCours === f.id; return (
+          <div key={f.id} className="rounded-xl border" style={{ borderColor: C.hairline, background: "#fff" }}>
+            <div className="flex items-center gap-3 p-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ background: f.couleur + "18" }}>{f.type === "banque" ? <Landmark size={16} style={{ color: f.couleur }} /> : <Smartphone size={16} style={{ color: f.couleur }} />}</div>
+              <div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{f.nom}</div><div className="truncate text-[11px]" style={{ color: C.muted }}>{c ? `${c.nb != null ? "Synchronisé · " + c.nb + " ligne(s)" : "Connecté"}${(c.sync || c.depuis) ? " · " + new Date(c.sync || c.depuis).toLocaleDateString("fr-FR") : ""}` : f.note}</div></div>
+              {c
+                ? <div className="flex gap-1"><button onClick={() => onSync(f.id)} disabled={busy} title="Resynchroniser" className="grid h-8 w-8 place-items-center rounded-lg border disabled:opacity-50" style={{ borderColor: C.hairline, color: C.teal }}><RefreshCw size={14} className={busy ? "animate-spin" : ""} /></button><button onClick={() => onDeconnecter(f.id)} disabled={busy} title="Déconnecter" className="grid h-8 w-8 place-items-center rounded-lg border disabled:opacity-50" style={{ borderColor: C.hairline, color: C.muted }}><X size={14} /></button></div>
+                : <button onClick={() => onConnecter(f.id)} disabled={nonConfigure || busy} title={nonConfigure ? "Connexion bancaire non configurée sur le serveur" : "Connexion sécurisée (OAuth)"} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40" style={{ background: C.ink }}>{busy ? <><RefreshCw size={12} className="animate-spin" /> Ouverture…</> : <><ShieldCheck size={12} /> Connecter en sécurité</>}</button>}
+            </div>
+          </div>); })}
+      </div>
+
+      <div className="mt-3 rounded-lg p-2.5 text-[11px] leading-relaxed" style={{ background: C.canvas, color: C.muted }}>
+        <ShieldCheck size={11} className="mr-1 inline" /> Connexion sécurisée : la lecture des encaissements passe par votre agrégateur (compte marchand configuré sur le serveur). Vos clés et identifiants ne transitent jamais par le navigateur — seules les transactions sont récupérées, via le serveur.
+      </div>
+    </Carte>
   );
 }
 function EnTeteRappro() { return <div><h2 className="text-lg font-semibold">Rapprochement bancaire</h2></div>; }
@@ -959,18 +1821,21 @@ function LigneWL({ e, onOpen, notif }) {
     </button>
   );
 }
-function Watch({ agg, onOpen, notifsParEmp }) {
+function Watch({ agg, onOpen, notifsParEmp, instNom }) {
   const { aujourdhui } = useAujourdhui();
   const { court } = useMontants();
   return (
     <div className="space-y-5">
-      <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition. Situation au {dateLongueAn(aujourdhui)} : délais de tension comptés à partir d'aujourd'hui. Ouvrez un emprunteur pour lui envoyer une recommandation.</p></div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="text-lg font-semibold">Alerte précoce</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Emprunteurs à jour — invisibles au PAR — dont les signaux de trésorerie se dégradent. Classés par sévérité × exposition. Situation au {dateLongueAn(aujourdhui)} : délais de tension comptés à partir d'aujourd'hui. Ouvrez un emprunteur pour lui envoyer une recommandation.</p></div>
+        {agg.watchlist.length > 0 && <button onClick={() => exporterPortefeuille(agg.watchlist, agg, instNom, "xlsx")} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border bg-white px-3 py-2 text-xs font-semibold" style={{ borderColor: C.hairline, color: C.ink }}><FileDown size={14} style={{ color: C.teal }} /> Exporter</button>}
+      </div>
       <div className="grid grid-cols-3 gap-4">{[["Signalés", agg.watchlist.length, C.rouge], ["Exposition", court(agg.expoAlerte), C.ambre], ["Part encours", pct(agg.expoAlerte / agg.encoursTotal), C.or]].map(([l, v, c], i) => (<Carte key={i} className="p-4"><div className="text-[11px] font-medium" style={{ color: C.muted }}>{l}</div><div className="mt-1 font-serif text-2xl font-semibold tabular-nums" style={{ color: c }}>{v}</div></Carte>))}</div>
       <Carte><div className="divide-y" style={{ borderColor: C.hairline }}>{agg.watchlist.map((e) => <LigneWL key={e.id} e={e} onOpen={onOpen} notif={notifsParEmp[e.id]} />)}</div></Carte>
     </div>
   );
 }
-function Liste({ portefeuille, onOpen }) {
+function Liste({ portefeuille, onOpen, agg, instNom }) {
   const { court } = useMontants();
   const [q, setQ] = useState(""); const [tri, setTri] = useState("ead");
   const arr = useMemo(() => { let a = portefeuille.filter((e) => e.nom.toLowerCase().includes(q.toLowerCase()) || e.secteur.toLowerCase().includes(q.toLowerCase())); return [...a].sort((x, y) => tri === "ead" ? y.ead - x.ead : tri === "score" ? x.score - y.score : y.dpd - x.dpd); }, [portefeuille, q, tri]);
@@ -978,7 +1843,9 @@ function Liste({ portefeuille, onOpen }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">Portefeuille — {portefeuille.length} emprunteurs</h2>
         <div className="flex items-center gap-2"><div className="flex items-center gap-2 rounded-lg border bg-white px-2.5 py-1.5" style={{ borderColor: C.hairline }}><Search size={14} style={{ color: C.muted }} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher…" className="w-32 bg-transparent text-sm outline-none sm:w-44" /></div>
-          <select value={tri} onChange={(e) => setTri(e.target.value)} className="rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}><option value="ead">Encours ↓</option><option value="score">Score ↑</option><option value="dpd">Retard ↓</option></select></div></div>
+          <select value={tri} onChange={(e) => setTri(e.target.value)} className="rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}><option value="ead">Encours ↓</option><option value="score">Score ↑</option><option value="dpd">Retard ↓</option></select>
+          {agg && <><button onClick={() => exporterPortefeuille(portefeuille, agg, instNom, "xlsx")} className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-sm font-semibold" style={{ borderColor: C.hairline, color: C.ink }} title="Exporter le portefeuille en Excel"><FileDown size={14} style={{ color: C.teal }} /><span className="hidden sm:inline">Excel</span></button>
+          <button onClick={() => exporterPortefeuille(portefeuille, agg, instNom, "csv")} className="inline-flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1.5 text-sm font-semibold" style={{ borderColor: C.hairline, color: C.ink }} title="Exporter en CSV"><Download size={14} style={{ color: C.teal }} /><span className="hidden sm:inline">CSV</span></button></>}</div></div>
       <Carte>
         <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 border-b px-5 py-2.5 text-[11px] font-semibold sm:grid-cols-[1fr_auto_auto_auto_auto]" style={{ borderColor: C.hairline, color: C.muted }}><div>Emprunteur</div><div className="hidden text-right sm:block">Statut</div><div className="hidden text-right sm:block">Retard</div><div className="text-right">Score</div><div className="text-right">Encours</div></div>
         <div className="divide-y" style={{ borderColor: C.hairline }}>{arr.map((e) => (
@@ -1408,5 +2275,74 @@ function Modeles({ instNom, modeles, modelesPerso, setModele, resetModele }) {
           <div><Etiquette>Actions proposées (une par ligne)</Etiquette><textarea aria-label={`Actions — ${cle}`} rows={3} value={m.actions.join("\n")} onChange={(ev) => setModele(cle, { ...m, actions: ev.target.value.split("\n") })} className={CHAMP} style={{ borderColor: C.hairline }} /></div>
         </Carte>); })}</div>
     </div>
+  );
+}
+
+/* ============================================================ RÉGLAGES (identité + saisons) ============================================================ */
+function Reglages({ espace, branding, setBranding, instActive, instNomBase, saisons, setSaisons, onClose }) {
+  const estPME = espace === "pme";
+  const org = estPME ? (branding.pme || { nom: "", logo: "" }) : (branding.inst[instActive] || { nom: "", logo: "" });
+  const [erreurLogo, setErreurLogo] = useState("");
+  const majOrg = (champ, val) => {
+    if (estPME) setBranding({ ...branding, pme: { ...branding.pme, [champ]: val } });
+    else setBranding({ ...branding, inst: { ...branding.inst, [instActive]: { ...(branding.inst[instActive] || {}), [champ]: val } } });
+  };
+  const choisirLogo = async (file) => { setErreurLogo(""); if (!file) return; try { majOrg("logo", await redimensionnerImage(file)); } catch (e) { setErreurLogo(e.message || "Image invalide."); } };
+  const titre = estPME ? "PME / entreprise" : `Institution — ${instNomBase}`;
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h2 className="text-lg font-semibold">Réglages</h2><p className="mt-1 text-sm" style={{ color: C.muted }}>Personnalisez l'identité affichée{estPME ? " et déclarez vos saisons de baisse d'activité" : ""}. Enregistré sur cet appareil.</p></div>
+        <button onClick={onClose} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-sm font-medium" style={{ borderColor: C.hairline }}><X size={15} /> Fermer</button>
+      </div>
+      <Carte className="p-5">
+        <div className="mb-4 flex items-center gap-2 text-sm font-semibold"><Settings size={16} style={{ color: C.teal }} /> Identité · {titre}</div>
+        <div className="grid gap-5 sm:grid-cols-[auto_1fr]">
+          <div className="flex flex-col items-center gap-2">
+            <div className="grid h-24 w-24 place-items-center overflow-hidden rounded-xl border" style={{ borderColor: C.hairline, background: org.logo ? "#fff" : C.canvas }}>
+              {org.logo ? <img src={org.logo} alt="Logo" className="h-full w-full object-contain" /> : <ImageIcon size={28} style={{ color: C.muted }} />}
+            </div>
+            <div className="flex gap-1.5">
+              <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold" style={{ borderColor: C.hairline }}><UploadCloud size={13} /> Logo<input type="file" accept="image/*" className="hidden" onChange={(e) => { choisirLogo(e.target.files[0]); e.target.value = ""; }} /></label>
+              {org.logo && <button onClick={() => majOrg("logo", "")} className="grid h-8 w-8 place-items-center rounded-lg border" style={{ borderColor: C.hairline, color: C.muted }} title="Retirer le logo"><Trash2 size={14} /></button>}
+            </div>
+          </div>
+          <div className="space-y-3">
+            <label className="block text-xs font-semibold" style={{ color: C.muted }}>{estPME ? "Nom de l'entreprise / PME" : "Nom de l'institution"}
+              <input value={org.nom || ""} onChange={(e) => majOrg("nom", e.target.value)} placeholder={estPME ? "Ex. NPM Multiservices" : instNomBase} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm font-normal outline-none focus:border-[#0F766E]" style={{ borderColor: C.hairline, color: C.ink }} /></label>
+            {erreurLogo && <div className="text-xs" style={{ color: C.rouge }}>{erreurLogo}</div>}
+            <div className="text-[11px] leading-relaxed" style={{ color: C.muted }}>Le nom et le logo apparaissent dans l'en-tête{estPME ? " et sur vos exports" : " et sur le portefeuille"}. Image PNG, JPG… redimensionnée automatiquement.</div>
+          </div>
+        </div>
+      </Carte>
+      {estPME ? <ReglagesSaisons saisons={saisons} setSaisons={setSaisons} /> : <div className="text-[11px]" style={{ color: C.muted }}>Astuce : changez d'institution dans l'en-tête pour configurer chacune séparément.</div>}
+    </div>
+  );
+}
+function ReglagesSaisons({ saisons, setSaisons }) {
+  const maj = (id, champ, val) => setSaisons(saisons.map((s) => (s.id === id ? { ...s, [champ]: val } : s)));
+  const retirer = (id) => setSaisons(saisons.filter((s) => s.id !== id));
+  const ajouter = (preset) => setSaisons([...saisons, { ...saisonVide(), ...(preset || {}) }]);
+  const presetsRestants = SAISONS_PRESETS.filter((p) => !saisons.some((s) => s.nom === p.nom));
+  return (
+    <Carte className="p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Snowflake size={16} style={{ color: "#1D4ED8" }} /> Saisons de baisse d'activité</div>
+      <p className="mb-4 text-sm leading-relaxed" style={{ color: C.muted }}>Déclarez les périodes où votre chiffre d'affaires baisse normalement (hivernage, fêtes de fin d'année, Tabaski…). VIGIE en tient compte dans la prévision de trésorerie et ne confond pas ces baisses attendues avec une dégradation.</p>
+      {saisons.length === 0 ? <div className="rounded-lg p-3 text-sm" style={{ background: C.canvas, color: C.muted }}>Aucune saison déclarée pour l'instant.</div> : (
+        <div className="space-y-3">{saisons.map((s) => (
+          <div key={s.id} className="grid grid-cols-1 gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_auto_auto_auto_auto]" style={{ borderColor: C.hairline }}>
+            <input value={s.nom} onChange={(e) => maj(s.id, "nom", e.target.value)} placeholder="Nom de la saison (ex. Fêtes de fin d'année)" className="rounded-lg border bg-white px-2.5 py-1.5 text-sm outline-none focus:border-[#0F766E]" style={{ borderColor: C.hairline }} />
+            <label className="flex items-center gap-1 text-xs" style={{ color: C.muted }}>de <select aria-label="Mois de début" value={s.moisDebut} onChange={(e) => maj(s.id, "moisDebut", Number(e.target.value))} className="rounded-lg border bg-white px-2 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}>{MOIS_NOMS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}</select></label>
+            <label className="flex items-center gap-1 text-xs" style={{ color: C.muted }}>à <select aria-label="Mois de fin" value={s.moisFin} onChange={(e) => maj(s.id, "moisFin", Number(e.target.value))} className="rounded-lg border bg-white px-2 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}>{MOIS_NOMS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}</select></label>
+            <label className="flex items-center gap-1 text-xs" style={{ color: C.muted }}>baisse <select aria-label="Ampleur de la baisse" value={Math.round(s.baisse * 100)} onChange={(e) => maj(s.id, "baisse", Number(e.target.value) / 100)} className="rounded-lg border bg-white px-2 py-1.5 text-sm outline-none" style={{ borderColor: C.hairline }}>{[10, 15, 20, 25, 30, 40, 50].map((p) => <option key={p} value={p}>−{p} %</option>)}</select></label>
+            <button onClick={() => retirer(s.id)} className="grid h-9 w-9 place-items-center justify-self-end rounded-lg border" style={{ borderColor: C.hairline, color: C.muted }} title="Supprimer cette saison"><Trash2 size={14} /></button>
+          </div>))}</div>
+      )}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button onClick={() => ajouter()} className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-semibold text-white" style={{ background: C.ink }}><Plus size={14} /> Ajouter une saison</button>
+        {presetsRestants.length > 0 && <span className="text-xs" style={{ color: C.muted }}>ou un modèle :</span>}
+        {presetsRestants.map((p) => <button key={p.nom} onClick={() => ajouter(p)} className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium" style={{ borderColor: C.hairline, color: C.ink }}><Plus size={11} /> {p.nom}</button>)}
+      </div>
+    </Carte>
   );
 }

@@ -8,8 +8,9 @@ import { APP_HREF } from "./site/theme.js";
    Routage par ancre — aucun réglage serveur nécessaire
    (Vercel, dossier dist/ ouvert hors-ligne, etc.).
    ============================================================ */
-// l'application (xlsx, recharts) n'est téléchargée qu'à l'ouverture de la démo
-const App = lazy(() => import("./App.jsx"));
+// l'application (xlsx, recharts, auth) n'est téléchargée qu'à l'ouverture de l'app.
+// AppGate gère l'authentification quand elle est configurée, sinon rend la démo.
+const App = lazy(() => import("./Auth.jsx"));
 
 const lireRoute = () => (window.location.hash.startsWith(APP_HREF) ? "app" : "site");
 

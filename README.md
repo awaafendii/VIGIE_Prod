@@ -9,6 +9,13 @@ Plateforme de trésorerie PME et d'évaluation du risque de crédit.
 - Lecture et analyse mois par mois de n'importe quel fichier Excel/CSV : `src/analyse.js` (fonctions pures). Fichiers d'exemple (juin → septembre 2026) dans `public/exemples/`, régénérés par `node scripts/generer-exemples.mjs`.
 - Recommandations (alerte précoce → conseil envoyé à la PME) : section `RECOMMANDATIONS` de `src/App.jsx`, modèles par défaut dans `MODELES_DEFAUT`. Démo en mémoire, sans serveur.
 - Devises d'affichage : constante `DEVISES` dans `src/App.jsx` (taux indicatifs datés, à actualiser au besoin ; les données restent en FCFA).
+- Rapprochement bancaire : connexion **réelle** via le backend (`api/`), client front dans `src/banque.js`. Intégration **CinetPay** (Orange Money, Wave, MTN, Moov…) : les encaissements arrivent par webhook (`/api/banque/notify`), sont vérifiés auprès de CinetPay puis stockés (Vercel KV) et lus par mois. Aucun secret n'est saisi ni stocké dans le navigateur. Configuration et mise en service : [`api/README.md`](api/README.md). Tant que l'agrégateur n'est pas configuré, l'écran affiche « connexion non activée » (aucune donnée inventée).
+
+## Sécurité
+- En-têtes de sécurité (CSP, HSTS, anti-clickjacking, anti-sniffing, Permissions-Policy) dans `vercel.json`.
+- Secrets uniquement côté serveur (variables d'environnement, cf. `.env.example`) — jamais dans le front ni dans Git.
+- Session bancaire par cookie `httpOnly`/`Secure`/`SameSite=Lax` signé ; contrôle d'origine (anti-CSRF) et redirections confinées à `APP_ORIGIN` (anti open-redirect).
+- Import de fichier borné (type + taille max 15 Mo).
 
 ## Lancer en local
 ```bash
