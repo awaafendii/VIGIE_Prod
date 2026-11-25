@@ -11,10 +11,10 @@
    identité → appartenance PME → rôle AVANT toute écriture. Non
    configuré → 501 (mode démo intact).
    ============================================================ */
-import { json } from "./_lib/securite.js";
-import { configured } from "./_lib/db.js";
-import { utilisateur, membre, journaliser, clientUtilisateur } from "./_lib/auth.js";
-import { client, accorder, revoquer, peutPartager, scopesValides } from "./_lib/consent.js";
+import { json } from "../_lib/securite.js";
+import { configured } from "../_lib/db.js";
+import { utilisateur, membre, journaliser, clientUtilisateur } from "../_lib/auth.js";
+import { client, accorder, revoquer, peutPartager, scopesValides } from "../_lib/consent.js";
 
 async function corps(req) {
   if (req.body && typeof req.body === "object") return req.body;

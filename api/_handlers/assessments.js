@@ -5,10 +5,10 @@
                     partir des transactions persistées et l'historise.
                     Rôles requis : owner | finance_manager | accountant.
    ============================================================ */
-import { json } from "./_lib/securite.js";
-import { configured } from "./_lib/db.js";
-import { utilisateur, membre, journaliser, clientUtilisateur } from "./_lib/auth.js";
-import { client, peutEcrire, evaluerEtHistoriser } from "./_lib/finance.js";
+import { json } from "../_lib/securite.js";
+import { configured } from "../_lib/db.js";
+import { utilisateur, membre, journaliser, clientUtilisateur } from "../_lib/auth.js";
+import { client, peutEcrire, evaluerEtHistoriser } from "../_lib/finance.js";
 
 async function corps(req) {
   if (req.body && typeof req.body === "object") return req.body;

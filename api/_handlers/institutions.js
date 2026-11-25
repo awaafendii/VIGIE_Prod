@@ -9,9 +9,9 @@
    que ses propres organisations ; l'annuaire doit donc contourner la RLS,
    APRÈS vérification que l'appelant est un utilisateur authentifié.
    ============================================================ */
-import { json } from "./_lib/securite.js";
-import { configured, admin } from "./_lib/db.js";
-import { utilisateur } from "./_lib/auth.js";
+import { json } from "../_lib/securite.js";
+import { configured, admin } from "../_lib/db.js";
+import { utilisateur } from "../_lib/auth.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return json(res, 405, { erreur: "methode" });

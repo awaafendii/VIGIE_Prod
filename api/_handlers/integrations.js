@@ -13,10 +13,10 @@
      pas de détournement des encaissements d'une autre PME ;
    • sans clé de chiffrement serveur, on refuse (501) plutôt que stocker en clair.
    ============================================================ */
-import { json } from "./_lib/securite.js";
-import { configured, admin } from "./_lib/db.js";
-import { utilisateur, membre, journaliser, clientUtilisateur } from "./_lib/auth.js";
-import { chiffrementDispo, sceller, versionActive } from "./_lib/crypto.js";
+import { json } from "../_lib/securite.js";
+import { configured, admin } from "../_lib/db.js";
+import { utilisateur, membre, journaliser, clientUtilisateur } from "../_lib/auth.js";
+import { chiffrementDispo, sceller, versionActive } from "../_lib/crypto.js";
 
 const ROLES_ECRITURE = ["owner", "finance_manager"];
 

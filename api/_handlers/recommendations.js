@@ -6,10 +6,10 @@
         : l'auteur doit être membre de l'INSTITUTION avec un rôle habilité.
           Crée la recommandation + un évènement 'sent' (historisé).
    ============================================================ */
-import { json } from "./_lib/securite.js";
-import { configured } from "./_lib/db.js";
-import { utilisateur, membre, journaliser, clientUtilisateur } from "./_lib/auth.js";
-import { client } from "./_lib/finance.js";
+import { json } from "../_lib/securite.js";
+import { configured } from "../_lib/db.js";
+import { utilisateur, membre, journaliser, clientUtilisateur } from "../_lib/auth.js";
+import { client } from "../_lib/finance.js";
 
 const ROLES_INST = ["admin", "credit_analyst", "credit_agent"];
 
