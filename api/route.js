@@ -50,8 +50,13 @@ const ROUTES = {
 
 export default function handler(req, res) {
   let key = "";
-  try { key = new URL(req.url, "http://x").pathname.replace(/^\/+/, "").replace(/^api\//, "").replace(/\/+$/, ""); }
-  catch { key = ""; }
+  try {
+    const u = new URL(req.url, "http://x");
+    // __path est fourni par la réécriture Vercel (/api/:path* → /api/route?__path=:path*).
+    // Repli sur le pathname si l'appel arrive en direct.
+    key = (u.searchParams.get("__path") || u.pathname.replace(/^\/+/, "").replace(/^api\//, ""))
+      .replace(/^\/+/, "").replace(/\/+$/, "");
+  } catch { key = ""; }
   const h = ROUTES[key];
   if (!h) {
     res.statusCode = 404;
